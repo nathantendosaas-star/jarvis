@@ -1,0 +1,47 @@
+# JARVIS Backend Implementation Checklist
+
+- `[x]` **Phase 1: Environment & Project Setup**
+  - `[x]` Define `requirements.txt` with python dependencies
+  - `[x]` Create and configure `.env.example` file with all backend variables
+  - `[x]` Implement cross-platform startup manager `start-dev.js` to run Vite and FastAPI concurrently
+  - `[x]` Configure `vite.config.ts` with reverse proxy for `/api` pointing to FastAPI on port 8000
+  - `[x]` Update `package.json` dev script to use `start-dev.js`
+  - `[x]` Update `.gitignore` with Python and storage exclusions
+- `[x]` **Phase 2: Database & Models**
+  - `[x]` Configure `database.py` with SQLAlchemy async engine and SQLite WAL journaling rules
+  - `[x]` Define database models: Projects, Chats, Messages, Files, Tasks, Memories, Settings
+  - `[x]` Create models `__init__.py` with aggregated exports
+- `[x]` **Phase 3: Core Infrastructure**
+  - `[x]` Implement `config.py` with env-based settings and lru_cache singleton
+  - `[x]` Implement `events.py` with in-memory asyncio event broker
+  - `[x]` Implement `dependencies.py` with FastAPI DI providers
+  - `[x]` Implement `main.py` FastAPI application with lifespan and CORS
+- `[x]` **Phase 4: Complex Services (Opus 4.6)**
+  - `[x]` Implement `AIService` using the modern `google-genai` SDK with async streaming, retry, and model fallback
+  - `[x]` Implement `ChatService` for storing messages and managing chat sessions
+- `[x]` **Phase 5: Pydantic Schemas (Gemini 3.5 Flash)**
+  - `[x]` Create `schemas/project.py` — ProjectCreate, ProjectUpdate, ProjectResponse
+  - `[x]` Create `schemas/chat.py` — ChatCreate, ChatResponse, MessageResponse, StreamRequest
+  - `[x]` Create `schemas/file.py` — FileResponse
+  - `[x]` Create `schemas/task.py` — TaskCreate, TaskUpdate, TaskResponse
+  - `[x]` Create `schemas/memory.py` — MemoryCreate, MemoryResponse
+  - `[x]` Create `schemas/settings.py` — SettingUpdate, SettingResponse
+- `[x]` **Phase 6: Simple CRUD Services (Gemini 3.5 Flash)**
+  - `[x]` Implement `ProjectService` for project CRUD
+  - `[x]` Implement `FileService` for upload, validation, and local disk writes
+  - `[x]` Implement `TaskService` for async task state management
+  - `[x]` Implement `MemoryService` for pinned facts and summaries
+- `[x]` **Phase 7: API Endpoints (Gemini 3.5 Flash)**
+  - `[x]` Fill in `auth.py` — env-based password login and JWT token generation
+  - `[x]` Fill in `projects.py` — GET, POST, PATCH, DELETE project endpoints
+  - `[x]` Fill in `chats.py` — chat CRUD + SSE streaming endpoint
+  - `[x]` Fill in `files.py` — upload and delete endpoints
+  - `[x]` Fill in `tasks.py` — task CRUD and status updates
+  - `[x]` Fill in `memories.py` — memory CRUD
+  - `[x]` Fill in `settings.py` — key-value settings endpoints
+- `[x]` **Phase 8: Verification**
+  - `[x]` Create `.env` from `.env.example` with actual API key
+  - `[x]` Install Python deps with `pip install -r requirements.txt`
+  - `[x]` Verify backend starts with `python -m uvicorn backend.src.main:app`
+  - `[x]` Verify unified startup with `npm run dev`
+  - `[x]` Test `/api/health` endpoint

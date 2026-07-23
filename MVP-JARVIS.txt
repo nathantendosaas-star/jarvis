@@ -1,0 +1,709 @@
+# JARVIS AI OPERATING SYSTEM
+
+## MVP Product Requirements Document (Backend + Full Stack)
+
+**Version:** 1.0
+
+---
+
+# Executive Summary
+
+JARVIS is an AI Operating System that transforms natural language into executable work.
+
+Unlike ChatGPT, which primarily answers questions, JARVIS is designed to **plan, organize, execute, and monitor tasks**. The MVP focuses on creating a stable, modular foundation that supports AI conversations, project organization, task management, and future automation.
+
+The MVP is **not** intended to be a fully autonomous agent. It is a production-quality foundation that can later evolve into a multi-agent AI operating system.
+
+---
+
+# Primary Goal
+
+Deliver a working application where a user can:
+
+* Chat with Gemini.
+* Organize work into projects.
+* Upload and manage files.
+* Create and track AI-generated tasks.
+* Persist conversations and project data.
+* Stream AI responses.
+* View AI usage and task status.
+* Prepare the architecture for future browser automation, MCP tools, and multiple AI providers.
+
+---
+
+# Technology Stack
+
+## Frontend
+
+* React
+* TypeScript
+* Tailwind CSS
+* Framer Motion
+* React Router
+* Zustand
+* TanStack Query
+
+## Backend
+
+* Python 3.12+
+* FastAPI
+* Uvicorn
+* SQLAlchemy 2.x
+* Alembic
+* Pydantic
+* WebSockets
+* AsyncIO
+
+## Database
+
+* SQLite (development)
+* PostgreSQL (production-ready compatibility)
+
+## AI
+
+* Google Gemini API only
+* Model configurable (default: Gemini 2.5 Flash)
+
+No local/offline models in MVP.
+
+---
+
+# Architecture
+
+```text
+React Frontend
+        │
+ REST + WebSocket
+        │
+FastAPI Backend
+        │
+──────────────────────────────
+Chat Service
+Project Service
+Task Service
+Memory Service
+File Service
+AI Service
+Settings Service
+──────────────────────────────
+SQLite Database
+        │
+Gemini API
+```
+
+---
+
+# MVP Modules
+
+## 1. Authentication
+
+Simple local authentication.
+
+Features:
+
+* Login
+* Logout
+* Remember session
+
+No OAuth.
+
+Single-user system.
+
+---
+
+## 2. Dashboard
+
+Displays:
+
+* Active projects
+* Recent chats
+* Running tasks
+* API usage
+* Uploaded files
+* Recent activity
+* Current AI model
+* System status
+
+---
+
+## 3. Chat
+
+Core feature.
+
+Supports:
+
+* Streaming responses
+* Markdown
+* Code blocks
+* Images (UI placeholder)
+* File attachment
+* Regenerate
+* Edit message
+* Conversation history
+
+Backend responsibilities:
+
+* Store every message
+* Generate Gemini responses
+* Stream responses
+* Track token usage
+* Track latency
+* Save metadata
+
+---
+
+## 4. Projects
+
+Every conversation belongs to a project.
+
+Project contains:
+
+* Name
+* Description
+* Icon
+* Color
+* Files
+* Chats
+* Tasks
+* Notes
+* Creation date
+* Last modified
+
+---
+
+## 5. File Manager
+
+Upload:
+
+* Images
+* PDF
+* Markdown
+* TXT
+* ZIP
+
+Store metadata.
+
+Preview support prepared.
+
+---
+
+## 6. Memory
+
+Stores:
+
+Recent conversations
+
+Project summaries
+
+Pinned notes
+
+User preferences
+
+AI summaries
+
+Searchable.
+
+Not vector search yet.
+
+---
+
+## 7. Tasks
+
+Every AI action becomes a task.
+
+Status:
+
+Queued
+
+Running
+
+Completed
+
+Failed
+
+Cancelled
+
+Each task includes:
+
+ID
+
+Title
+
+Description
+
+Created
+
+Completed
+
+Logs
+
+Duration
+
+Associated project
+
+Associated chat
+
+---
+
+## 8. Settings
+
+Store:
+
+Gemini API key
+
+Theme
+
+Preferred model
+
+Streaming toggle
+
+Temperature
+
+Max output tokens
+
+---
+
+## 9. Notifications
+
+Simple notification center.
+
+Task completed
+
+Errors
+
+Uploads
+
+API failures
+
+---
+
+# Backend Services
+
+## AI Service
+
+Responsible for:
+
+Gemini communication
+
+Streaming
+
+Retry logic
+
+Error handling
+
+Usage tracking
+
+Model switching
+
+No business logic.
+
+---
+
+## Project Service
+
+CRUD
+
+Search
+
+Recent
+
+Archive
+
+Delete
+
+---
+
+## Chat Service
+
+Create conversation
+
+Store messages
+
+Generate summaries
+
+Conversation search
+
+---
+
+## File Service
+
+Upload
+
+Delete
+
+Rename
+
+Move
+
+Metadata
+
+Preview metadata
+
+---
+
+## Task Service
+
+Queue
+
+Status updates
+
+Logs
+
+History
+
+Cancellation
+
+---
+
+## Memory Service
+
+Store summaries
+
+Retrieve summaries
+
+Project memory
+
+Pinned memories
+
+---
+
+## Settings Service
+
+Load preferences
+
+Update preferences
+
+Validate API key
+
+---
+
+# Database Tables
+
+## users
+
+id
+
+username
+
+password_hash
+
+created_at
+
+---
+
+## projects
+
+id
+
+name
+
+description
+
+icon
+
+color
+
+created_at
+
+updated_at
+
+---
+
+## chats
+
+id
+
+project_id
+
+title
+
+summary
+
+created_at
+
+updated_at
+
+---
+
+## messages
+
+id
+
+chat_id
+
+role
+
+content
+
+token_count
+
+latency
+
+created_at
+
+---
+
+## files
+
+id
+
+project_id
+
+filename
+
+path
+
+size
+
+mime_type
+
+created_at
+
+---
+
+## tasks
+
+id
+
+project_id
+
+status
+
+title
+
+description
+
+logs
+
+started_at
+
+finished_at
+
+---
+
+## memories
+
+id
+
+project_id
+
+title
+
+content
+
+importance
+
+created_at
+
+---
+
+## settings
+
+key
+
+value
+
+---
+
+# REST API
+
+## Chat
+
+POST /chat
+
+GET /chat
+
+GET /chat/{id}
+
+DELETE /chat/{id}
+
+---
+
+## Projects
+
+POST /projects
+
+GET /projects
+
+PATCH /projects/{id}
+
+DELETE /projects/{id}
+
+---
+
+## Files
+
+POST /files
+
+GET /files
+
+DELETE /files/{id}
+
+---
+
+## Tasks
+
+POST /tasks
+
+GET /tasks
+
+PATCH /tasks/{id}
+
+---
+
+## Memory
+
+GET /memory
+
+POST /memory
+
+DELETE /memory/{id}
+
+---
+
+## Settings
+
+GET /settings
+
+PATCH /settings
+
+---
+
+# WebSockets
+
+Real-time streaming only.
+
+Used for:
+
+AI responses
+
+Task progress
+
+Notifications
+
+Connection status
+
+---
+
+# Error Handling
+
+Standard JSON responses.
+
+Every error logged.
+
+Retry Gemini on transient failures.
+
+Graceful timeout handling.
+
+---
+
+# Logging
+
+Log:
+
+Requests
+
+Gemini latency
+
+Errors
+
+Tokens
+
+Uploads
+
+Task lifecycle
+
+---
+
+# Configuration
+
+Environment variables:
+
+GEMINI_API_KEY
+
+DATABASE_URL
+
+SECRET_KEY
+
+HOST
+
+PORT
+
+DEBUG
+
+LOG_LEVEL
+
+---
+
+# Security
+
+Store API keys securely.
+
+Validate uploads.
+
+Restrict file size.
+
+Sanitize filenames.
+
+Never expose secrets to frontend.
+
+Use HTTPS in production.
+
+---
+
+# Performance Goals
+
+Chat response begins streaming within approximately two seconds under normal conditions.
+
+Dashboard loads in under one second with cached data.
+
+Database queries should be indexed for common lookups.
+
+The backend should support multiple simultaneous conversations without blocking by using asynchronous endpoints.
+
+---
+
+# Out of Scope
+
+No offline/local models.
+
+No browser automation.
+
+No MCP integration.
+
+No autonomous agents.
+
+No email.
+
+No GitHub.
+
+No calendar.
+
+No mobile app.
+
+No plugins.
+
+No cloud sync.
+
+These are reserved for future releases.
+
+---
+
+# Definition of Done
+
+The MVP is complete when a user can:
+
+* Log in.
+* Create a project.
+* Start a conversation.
+* Chat with Gemini using a configurable API key.
+* Receive streamed responses.
+* Upload files to projects.
+* Store conversations permanently.
+* Search conversations.
+* Create and track tasks.
+* View project history.
+* Configure application settings.
+* Restart the application without losing data.
+
+The codebase should be modular, well-documented, and designed so that future capabilities—such as browser automation, multi-agent orchestration, MCP servers, and additional AI providers—can be added without major architectural changes.

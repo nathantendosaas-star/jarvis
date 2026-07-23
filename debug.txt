@@ -1,0 +1,11 @@
+1. add file execution; execution of python files in the codebase
+2. command execution; all cmd commands
+3. setup use of gemma 4 31b free or Deepseek v4 flash from openrouter via open router api key via the file E:\nate\GEMINI AGENT\JARVIS\python_agent.py
+4. implement agent delegation
+5. integrate with jules api to offload workload to github then jules to do the work
+6. connect resend for email marketing
+7. integrate playwright or similar for web browser automation 
+8. add web_fetch
+9. access to terminal tools
+10. introduce GREP for file search
+

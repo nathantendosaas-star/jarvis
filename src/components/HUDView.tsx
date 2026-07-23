@@ -1,0 +1,361 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Mic,
+  Activity,
+  Box,
+  BarChart2,
+  Clock,
+  Terminal,
+  Cpu,
+  Globe,
+  Settings,
+  ShieldAlert,
+  Send,
+  User,
+  Bot
+} from "lucide-react";
+import { Project, Agent, SystemMetrics, ChatMessage } from "../types";
+import D3Timeline from "./D3Timeline";
+
+interface HUDViewProps {
+  projects: Project[];
+  agents: Agent[];
+  metrics: SystemMetrics;
+  messages: ChatMessage[];
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  triggerNotification: (title: string, msg: string, type: any) => void;
+  selectedModel: string;
+  onOpenVoice: () => void;
+}
+
+export default function HUDView({
+  projects,
+  agents,
+  metrics,
+  messages,
+  setMessages,
+  triggerNotification,
+  selectedModel,
+  onOpenVoice
+}: HUDViewProps) {
+  const [input, setInput] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isProcessing]);
+
+  const handleSend = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!input.trim() || isProcessing) return;
+
+    const userMsg = input.trim();
+    setInput("");
+    
+    const newUserMsg: ChatMessage = {
+      id: "msg-" + Date.now(),
+      role: "user",
+      content: userMsg,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    
+    setMessages(prev => [...prev, newUserMsg]);
+    setIsProcessing(true);
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: userMsg,
+          history: messages.slice(-10),
+          model: selectedModel,
+          useSearch: true
+        })
+      });
+
+      if (!res.ok) throw new Error("API Error");
+
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = "";
+      
+      const newBotMsgId = "msg-" + Date.now();
+      setMessages(prev => [
+        ...prev,
+        { id: newBotMsgId, role: "model", content: "", timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+      ]);
+
+      while (reader) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunkText = decoder.decode(value, { stream: true });
+        const lines = chunkText.split("\n\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.replace("data: ", "");
+            if (dataStr === "[DONE]") {
+              setIsProcessing(false);
+              break;
+            }
+            try {
+              const data = JSON.parse(dataStr);
+              if (data.error) {
+                triggerNotification("System Error", data.error, "error");
+                setIsProcessing(false);
+                break;
+              }
+              if (data.text) {
+                fullResponse += data.text;
+                setMessages(prev => prev.map(m => m.id === newBotMsgId ? { ...m, content: fullResponse } : m));
+              }
+            } catch (err) {
+              console.error("Failed to parse SSE data", err);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      triggerNotification("Communication Failure", "Failed to reach cognitive core.", "error");
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 flex flex-col h-full bg-hud-bg overflow-hidden text-slate-300 font-sans p-4 gap-4">
+      {/* Top Bar - Minimal */}
+      <div className="flex items-center justify-between px-2 text-[10px] uppercase font-mono tracking-widest text-slate-500">
+        <div className="flex items-center gap-6">
+          <span className="flex items-center gap-2"><div className="w-1.5 h-1.5 rounded-full bg-hud-green animate-pulse" /> CORE_SYSTEM_ONLINE</span>
+          <span>LAT: 12ms</span>
+          <span>NET: SECURE</span>
+        </div>
+        <div className="flex items-center gap-6">
+          <span>MODEL: {selectedModel.split("-").slice(0,2).join(" ").toUpperCase()}</span>
+          <span>{new Date().toLocaleDateString()}</span>
+        </div>
+      </div>
+
+      {/* Main Layout Grid */}
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-4 min-h-0">
+        
+        {/* Left Column: Monitoring */}
+        <div className="hidden md:flex flex-col col-span-3 gap-4">
+          
+          {/* Card 1: Customer / User metrics */}
+          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex flex-col gap-4 shadow-xl">
+            <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider">
+              <span>Customer</span>
+              <span className="text-slate-500">...</span>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <div className="text-hud-green flex items-center gap-1 text-[10px]"><div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-transparent border-b-hud-green" /></div>
+                <div className="text-2xl font-display font-bold text-white">2.4%</div>
+                <div className="text-[10px] text-slate-500">Web Surfing</div>
+              </div>
+              <div>
+                <div className="text-hud-orange flex items-center gap-1 text-[10px]"><div className="w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-transparent border-t-hud-orange" /></div>
+                <div className="text-2xl font-display font-bold text-white">1.1%</div>
+                <div className="text-[10px] text-slate-500">Radio Station</div>
+              </div>
+            </div>
+            {/* Fake SVG Graph */}
+            <div className="h-12 w-full mt-2 relative">
+              <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 30">
+                <path d="M0,15 Q10,5 20,15 T40,20 T60,10 T80,25 T100,15" fill="none" stroke="var(--color-hud-green)" strokeWidth="1.5" />
+                <path d="M0,25 Q15,10 30,20 T50,25 T70,15 T90,20 T100,5" fill="none" stroke="var(--color-hud-orange)" strokeWidth="1.5" />
+              </svg>
+            </div>
+          </div>
+
+          {/* Card 2: System Usage */}
+          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex flex-col gap-4 shadow-xl">
+            <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider">
+              <span>System Core</span>
+              <Cpu className="w-4 h-4 text-slate-500" />
+            </div>
+            <div className="space-y-3 pt-2">
+              <div className="flex items-center justify-between text-[10px] font-mono">
+                <span className="text-slate-400">CPU LOAD</span>
+                <span className="text-hud-yellow">{metrics.cpu}%</span>
+              </div>
+              <div className="w-full bg-black/50 rounded-full h-2 overflow-hidden border border-white/5">
+                <div className="bg-hud-yellow h-full" style={{ width: `${metrics.cpu}%` }} />
+              </div>
+              
+              <div className="flex items-center justify-between text-[10px] font-mono mt-4">
+                <span className="text-slate-400">MEMORY ALOC</span>
+                <span className="text-hud-teal">{metrics.ram}GB</span>
+              </div>
+              <div className="w-full bg-black/50 rounded-full h-2 overflow-hidden border border-white/5">
+                <div className="bg-hud-teal h-full" style={{ width: `${(metrics.ram / 16) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+
+          {/* Card 3: Agents */}
+          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex-1 shadow-xl flex flex-col overflow-hidden">
+            <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider mb-4">
+              <span>Active Agents</span>
+              <span className="bg-hud-green/20 text-hud-green px-2 py-0.5 rounded-full text-[10px]">{agents.length} Online</span>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              {agents.map(a => (
+                <div key={a.id} className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-black border border-white/10 flex items-center justify-center text-sm">{a.avatar}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[11px] text-white font-bold truncate">{a.name}</div>
+                    <div className="text-[9px] text-slate-500 truncate">{a.status === "working" ? a.currentTask : a.role}</div>
+                  </div>
+                  <div className={`w-1.5 h-1.5 rounded-full \${a.status === "working" ? "bg-hud-green animate-pulse" : a.status === "paused" ? "bg-hud-orange" : "bg-slate-600"}`} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+
+        {/* Center Column: The HUD / Agent Core */}
+        <div className="col-span-1 md:col-span-6 flex flex-col relative h-full">
+          
+          {/* Futuristic HUD Background Element */}
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20 select-none overflow-hidden">
+            <div className="relative w-96 h-96 flex items-center justify-center">
+              <div className="absolute inset-0 border-2 border-slate-600 rounded-full animate-hud-spin" />
+              <div className="absolute inset-4 border border-dashed border-slate-500 rounded-full animate-hud-spin-reverse" />
+              <div className="absolute inset-12 border-[4px] border-hud-teal/30 rounded-full animate-hud-pulse" />
+              
+              {/* Center crosshairs */}
+              <div className="absolute w-[120%] h-[1px] bg-slate-700/50" />
+              <div className="absolute h-[120%] w-[1px] bg-slate-700/50" />
+            </div>
+          </div>
+
+          {/* Chat Messages Area */}
+          <div className="flex-1 overflow-y-auto p-4 z-10 flex flex-col space-y-6">
+            <div className="text-center mt-12 mb-8 animate-fade-in">
+              <div className="w-16 h-16 mx-auto bg-black border-2 border-hud-teal rounded-full flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(45,212,191,0.2)] animate-hud-pulse">
+                <Bot className="w-8 h-8 text-hud-teal" />
+              </div>
+              <h1 className="text-2xl font-display font-bold text-white tracking-widest">SYSTEM NEXUS</h1>
+              <p className="text-xs text-slate-400 font-mono mt-2 uppercase tracking-wider">Awaiting plain english instruction</p>
+            </div>
+
+            {messages.map((msg, i) => (
+              <div key={msg.id} className={`flex gap-4 max-w-[85%] \${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}>
+                <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center border border-white/10 bg-hud-card">
+                  {msg.role === 'user' ? <User className="w-4 h-4 text-hud-green" /> : <Bot className="w-4 h-4 text-hud-teal" />}
+                </div>
+                <div className={`flex flex-col gap-1 \${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                  <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase">
+                    <span>{msg.role === 'user' ? 'OPERATOR' : 'JARVIS'}</span>
+                    <span>{msg.timestamp}</span>
+                  </div>
+                  <div className={`p-4 text-sm leading-relaxed backdrop-blur-md border \${
+                    msg.role === 'user' 
+                      ? 'bg-hud-green/10 border-hud-green/20 text-hud-green rounded-2xl rounded-tr-sm' 
+                      : 'bg-hud-card/80 border-white/10 text-slate-200 rounded-2xl rounded-tl-sm shadow-xl font-mono'
+                  }`}>
+                    {msg.content}
+                    {msg.role === 'model' && isProcessing && i === messages.length - 1 && (
+                      <span className="inline-block w-2 h-4 bg-hud-teal ml-1 animate-pulse" />
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+            <div ref={messagesEndRef} className="h-4" />
+          </div>
+
+          {/* Input Bar */}
+          <div className="p-4 z-10 shrink-0">
+            <form onSubmit={handleSend} className="relative group">
+              {/* Outer HUD ring effect for input */}
+              <div className="absolute -inset-1 bg-gradient-to-r from-hud-teal/20 via-hud-green/20 to-hud-teal/20 rounded-full blur opacity-50 group-hover:opacity-75 transition duration-500" />
+              
+              <div className="relative bg-black border border-white/20 rounded-full flex items-center p-2 shadow-2xl">
+                <button type="button" onClick={onOpenVoice} className="w-10 h-10 rounded-full flex items-center justify-center text-slate-400 hover:text-hud-teal hover:bg-white/5 transition-colors">
+                  <Mic className="w-5 h-5" />
+                </button>
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Initiate command sequence..."
+                  className="flex-1 bg-transparent border-none outline-none px-4 text-white placeholder-slate-500 font-mono text-sm"
+                  disabled={isProcessing}
+                  autoFocus
+                />
+                <button 
+                  type="submit"
+                  disabled={isProcessing || !input.trim()}
+                  className="w-10 h-10 rounded-full bg-hud-card border border-white/10 flex items-center justify-center text-white hover:border-hud-teal hover:text-hud-teal transition-all disabled:opacity-50"
+                >
+                  <Send className="w-4 h-4 ml-0.5" />
+                </button>
+              </div>
+            </form>
+          </div>
+
+        </div>
+
+        {/* Right Column: Projects & Status */}
+        <div className="hidden lg:flex flex-col col-span-3 gap-4">
+          
+          {/* Card 4: Projects Timeline (Image 1 style) */}
+          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex-1 shadow-xl flex flex-col">
+            <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider mb-4">
+              <span>Upcoming Milestones</span>
+              <span className="text-slate-500">...</span>
+            </div>
+            
+            <div className="flex-1 min-h-0">
+              <D3Timeline />
+            </div>
+          </div>
+
+          {/* Card 5: Product Stats / Bars */}
+          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 h-64 shadow-xl flex flex-col">
+            <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider mb-6">
+              <span>Task Volatility</span>
+              <span className="text-slate-500">...</span>
+            </div>
+            
+            <div className="flex-1 flex items-end justify-between px-2 gap-2">
+              {[...Array(8)].map((_, i) => {
+                const h1 = Math.floor(Math.random() * 60) + 20;
+                const h2 = Math.floor(Math.random() * 40) + 10;
+                const isGreen = i % 2 === 0;
+                
+                return (
+                  <div key={i} className="relative flex flex-col items-center w-6 gap-1 group">
+                    <div className={`w-full rounded-full transition-all duration-500 \${isGreen ? 'bg-hud-green/20 group-hover:bg-hud-green' : 'bg-hud-orange/20 group-hover:bg-hud-orange'}`} style={{ height: `${h1}%` }}>
+                       <div className="w-full h-full flex items-end pb-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                         <span className="text-[9px] font-bold text-black">{h1}</span>
+                       </div>
+                    </div>
+                    <div className={`w-2 h-2 rounded-full \${isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} />
+                    <div className={`w-full rounded-full transition-all duration-500 \${isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} style={{ height: `${h2}%` }} />
+                  </div>
+                );
+              })}
+            </div>
+            
+            <div className="mt-4 pt-4 border-t border-white/5 flex justify-between text-[10px] uppercase font-mono text-slate-500">
+              <div className="flex gap-4">
+                <span className="flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full border border-hud-green" /> VALID</span>
+                <span className="flex items-center gap-1"><div className="w-1.5 h-1.5 rounded-full border border-hud-orange" /> INVALID</span>
+              </div>
+              <span className="text-white font-bold">TOTAL: 1,012</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
+}

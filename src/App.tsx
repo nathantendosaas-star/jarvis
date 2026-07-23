@@ -1,0 +1,334 @@
+import React, { Suspense, lazy, useState, useEffect, useRef } from "react";
+import Sidebar from "./components/Sidebar";
+import TopBar from "./components/TopBar";
+import DashboardView from "./components/DashboardView";
+import CommandPalette from "./components/CommandPalette";
+import VoiceSync from "./components/VoiceSync";
+import { fetchWorkspaceData, fetchWorkspaceFiles, fetchAgents, updateAgent as apiUpdateAgent } from "./api";
+
+import {
+  WorkspaceView,
+  Project,
+  Agent,
+  FileNode,
+  BrowserTab,
+  MemoryItem,
+  WorkflowNode,
+  ChatMessage,
+  SystemNotification,
+  SystemMetrics
+} from "./types";
+
+const ChatView = lazy(() => import("./components/ChatView"));
+const ProjectsView = lazy(() => import("./components/ProjectsView"));
+const AgentsView = lazy(() => import("./components/AgentsView"));
+const FilesView = lazy(() => import("./components/FilesView"));
+const BrowserView = lazy(() => import("./components/BrowserView"));
+const MemoryView = lazy(() => import("./components/MemoryView"));
+const AutomationView = lazy(() => import("./components/AutomationView"));
+const SettingsView = lazy(() => import("./components/SettingsView"));
+
+export default function App() {
+  const [currentView, setCurrentView] = useState<WorkspaceView>("dashboard");
+  const [collapsed, setCollapsed] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("gemini-3.1-flash-lite");
+  const [dataStatus, setDataStatus] = useState<"loading" | "ready" | "error">("loading");
+
+  // UI Open / Close Triggers
+  const [isCommandOpen, setIsCommandOpen] = useState(false);
+  const [isVoiceOpen, setIsVoiceOpen] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">("dark");
+
+  // Global Workspace states
+  const [projects, setProjects] = useState<Project[]>([]);
+
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [files, setFiles] = useState<FileNode[]>([]);
+  const [tabs, setTabs] = useState<BrowserTab[]>([]);
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [nodes, setNodes] = useState<WorkflowNode[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [notifications, setNotifications] = useState<SystemNotification[]>([]);
+  const [pendingVoicePrompt, setPendingVoicePrompt] = useState<string | null>(null);
+
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const triggerNotification = (title: string, message: string, type: "info" | "success" | "warning" | "error" | "agent" = "info") => {
+    const newNotif: SystemNotification = {
+      id: "n-" + Date.now(),
+      title,
+      message,
+      type,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      read: false
+    };
+    setNotifications(prev => [newNotif, ...prev]);
+  };
+
+  const workspaceReloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const refresh = () => {
+      if (workspaceReloadTimer.current) clearTimeout(workspaceReloadTimer.current);
+      workspaceReloadTimer.current = setTimeout(() => { void reloadWorkspaceData(); }, 150);
+    };
+    window.addEventListener("jarvis:workspace-changed", refresh);
+    return () => {
+      window.removeEventListener("jarvis:workspace-changed", refresh);
+      if (workspaceReloadTimer.current) clearTimeout(workspaceReloadTimer.current);
+    };
+  }, []);
+
+  const reloadWorkspaceData = async () => {
+    setDataStatus("loading");
+    try {
+      const [{ projects: loadedProjects }, workspaceFiles, loadedAgents] = await Promise.all([
+        fetchWorkspaceData(),
+        fetchWorkspaceFiles(),
+        fetchAgents().catch(() => []),   // agents table may be empty on first boot
+      ]);
+      setProjects(loadedProjects);
+      setFiles(workspaceFiles);
+      setAgents(loadedAgents);
+      setDataStatus("ready");
+    } catch (error) {
+      setDataStatus("error");
+      triggerNotification(
+        "Data Sync Failed",
+        error instanceof Error ? error.message : "Unable to load backend workspace data.",
+        "error",
+      );
+    }
+  };
+
+  // Persist agent mutations to the backend and sync local state
+  const handleUpdateAgent = async (
+    agentId: string,
+    patch: { status?: string; priority?: string; cpu_allocation?: number; memory_allocation?: number; current_task?: string | null; activity?: string[] }
+  ) => {
+    try {
+      const updated = await apiUpdateAgent(agentId, patch);
+      setAgents(prev => prev.map(a => (a.id === agentId ? updated : a)));
+    } catch {
+      triggerNotification("Agent Sync Failed", "Could not persist agent update to backend.", "error");
+    }
+  };
+
+  useEffect(() => {
+    reloadWorkspaceData();
+  }, []);
+
+  // Keyboard shortcut listener for Cmd+K / Ctrl+K
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setIsCommandOpen(prev => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  const toggleCommandPalette = () => setIsCommandOpen(!isCommandOpen);
+  const toggleVoiceOrb = () => setIsVoiceOpen(!isVoiceOpen);
+  const toggleTheme = () => {
+    const nextTheme = theme === "dark" ? "light" : "dark";
+    setTheme(nextTheme);
+    triggerNotification("Aesthetics Toggle", `Theme shifted to ${nextTheme} skin.`, "info");
+  };
+
+  // Handles transcribed text from the voice sync orb overlay
+  const handleVoiceTranscriptionResult = (transcribedText: string) => {
+    setPendingVoicePrompt(transcribedText);
+    setCurrentView("chat"); // Reroute user to chat viewport
+    triggerNotification("Sync Complete", "Voice input pushed to active chat.", "success");
+  };
+
+  const getActiveProjectName = () => {
+    if (!activeProjectId) return null;
+    return projects.find(p => p.id === activeProjectId)?.name || null;
+  };
+
+  const workspaceStorageBytes = projects.reduce((total, project) => total + (project.storageBytes || 0), 0);
+  const workspaceFileCount = projects.reduce((total, project) => total + (project.fileCount || 0), 0);
+  const workspaceTaskCount = projects.reduce((total, project) => total + project.tasksCount, 0);
+
+  const systemMetrics: SystemMetrics = {
+    cpu: projects.length,
+    ram: Number((workspaceStorageBytes / (1024 * 1024)).toFixed(2)),
+    networkSpeed: workspaceFileCount,
+    storage: workspaceTaskCount,
+    apiCalls: notifications.length,
+    activeAgents: agents.filter(a => a.status === 'working').length
+  };
+
+  const routeFallback = (
+    <div className="flex h-full items-center justify-center text-sm text-slate-400">
+      Loading workspace...
+    </div>
+  );
+
+  return (
+    <div className={`min-h-screen flex text-slate-100 font-sans selection:bg-blue-500/20 overflow-hidden ${
+      theme === "dark" ? "bg-jarvis-bg" : "bg-slate-50 text-slate-900"
+    }`}>
+      
+      {/* Dynamic Background visual vectors (Iron Man ARC Reactor or minimal stars) */}
+      <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+        <div className="absolute top-1/4 left-1/3 w-[500px] h-[500px] bg-blue-600/[0.03] rounded-full blur-[120px]" />
+        <div className="absolute bottom-1/4 right-1/4 w-[400px] h-[400px] bg-purple-600/[0.03] rounded-full blur-[100px]" />
+      </div>
+
+      {/* Primary Sidebar */}
+      <Sidebar
+        currentView={currentView}
+        setCurrentView={(view) => {
+          setCurrentView(view);
+          setIsMobileMenuOpen(false);
+        }}
+        collapsed={collapsed}
+        setCollapsed={setCollapsed}
+        projects={projects}
+        activeProjectId={activeProjectId}
+        setActiveProjectId={setActiveProjectId}
+        toggleCommandPalette={toggleCommandPalette}
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
+      />
+
+      {/* Main viewport area */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden z-10 relative">
+        {/* Top telemetry bar */}
+        <TopBar
+          currentView={currentView}
+          activeProjectName={getActiveProjectName()}
+          selectedModel={selectedModel}
+          setSelectedModel={setSelectedModel}
+          notifications={notifications}
+          toggleCommandPalette={toggleCommandPalette}
+          toggleVoiceOrb={toggleVoiceOrb}
+          theme={theme}
+          toggleTheme={toggleTheme}
+          metrics={systemMetrics}
+          unreadCount={unreadCount}
+          setNotifications={setNotifications}
+          toggleMobileMenu={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+        />
+
+        {/* Dynamic workspace viewport routing */}
+        <main className="flex-1 overflow-hidden flex flex-col">
+          {currentView === "dashboard" && (
+            <DashboardView
+              projects={projects}
+              agents={agents}
+              metrics={systemMetrics}
+              notifications={notifications}
+              setActiveView={setCurrentView}
+              setActiveProjectId={setActiveProjectId}
+              triggerNotification={triggerNotification}
+            />
+          )}
+
+          <Suspense fallback={routeFallback}>
+            {currentView === "chat" && (
+              <ChatView
+                messages={messages}
+                setMessages={setMessages}
+                selectedModel={selectedModel}
+                triggerNotification={triggerNotification}
+                pendingVoicePrompt={pendingVoicePrompt}
+                clearPendingVoicePrompt={() => setPendingVoicePrompt(null)}
+                systemInstruction="You are JARVIS, an advanced AI Operating System. Speak confidently, professionally, yet warm. Act as the central nervous orchestrator of specialized agents."
+              />
+            )}
+
+            {currentView === "projects" && (
+              <ProjectsView
+                projects={projects}
+                setProjects={setProjects}
+                activeProjectId={activeProjectId}
+                setActiveProjectId={setActiveProjectId}
+                triggerNotification={triggerNotification}
+              />
+            )}
+
+            {currentView === "agents" && (
+              <AgentsView
+                agents={agents}
+                setAgents={setAgents}
+                onUpdateAgent={handleUpdateAgent}
+                triggerNotification={triggerNotification}
+              />
+            )}
+
+            {currentView === "files" && (
+              <FilesView
+                files={files}
+                setFiles={setFiles}
+                triggerNotification={triggerNotification}
+              />
+            )}
+
+            {currentView === "browser" && (
+              <BrowserView
+                tabs={tabs}
+                setTabs={setTabs}
+                triggerNotification={triggerNotification}
+              />
+            )}
+
+            {currentView === "memory" && (
+              <MemoryView
+                memories={memories}
+                setMemories={setMemories}
+                agents={agents}
+                projects={projects}
+                triggerNotification={triggerNotification}
+              />
+            )}
+
+            {currentView === "automation" && (
+              <AutomationView
+                nodes={nodes}
+                setNodes={setNodes}
+                triggerNotification={triggerNotification}
+              />
+            )}
+
+            {currentView === "settings" && (
+              <SettingsView
+                theme={theme}
+                toggleTheme={toggleTheme}
+                selectedModel={selectedModel}
+                setSelectedModel={setSelectedModel}
+                triggerNotification={triggerNotification}
+              />
+            )}
+          </Suspense>
+        </main>
+      </div>
+
+      {/* Floating command palette overlay */}
+      <CommandPalette
+        isOpen={isCommandOpen}
+        onClose={() => setIsCommandOpen(false)}
+        setCurrentView={setCurrentView}
+        triggerNotification={triggerNotification}
+        toggleVoiceOrb={toggleVoiceOrb}
+      />
+
+      {/* Voice Sync interactive overlay orb */}
+      <VoiceSync
+        isOpen={isVoiceOpen}
+        onClose={() => setIsVoiceOpen(false)}
+        onTranscriptionResult={handleVoiceTranscriptionResult}
+        triggerNotification={triggerNotification}
+      />
+
+    </div>
+  );
+}
