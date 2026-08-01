@@ -61,6 +61,8 @@ export default function TopBar({
   const models = [
     { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite", desc: "Super-fast, low-latency", badge: "Ultra Speed" },
     { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", desc: "General & fast tasks", badge: "Balanced" },
+    { id: "deepseek/deepseek-v4-flash", name: "Deepseek v4 Flash", desc: "Super fast Deepseek flash", badge: "OpenRouter" },
+    { id: "gemma-4-31b", name: "Gemma 4 31b", desc: "Google Gemma 2 27B IT", badge: "OpenRouter" },
   ];
 
   const getFriendlyViewName = () => {

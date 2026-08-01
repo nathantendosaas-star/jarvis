@@ -2,55 +2,75 @@ import json
 import os
 import subprocess
 import requests
+import re
+from pathlib import Path
+
 # ==============================
 # OpenRouter Configuration
 # ==============================
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-MODEL = "deepseek/deepseek-v4-flash"
+# Supported models:
+# - "deepseek/deepseek-v4-flash" (or "deepseek/deepseek-r1" for reasoning)
+# - "google/gemma-2-27b-it" / "google/gemma-2-9b-it"
+MODEL = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-flash")
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
 HEADERS = {
-    "Authorization": f"Bearer {API_KEY}",
+    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
     "Content-Type": "application/json",
 }
 
+WORKSPACE_ROOT = Path(__file__).resolve().parent
+
+BLOCKED_COMMAND_PATTERNS = [
+    r"rmdir\s+/s", r"del\s+/f", r"\bformat\b",             # Windows destructive
+    r"rm\s+-rf\s+/(?!\S)", r"rm\s+-rf\s+~",                 # Unix destructive
+    r":\(\)\s*\{\s*:\|:&\s*\};:",                           # fork bomb
+    r"mkfs", r"dd\s+if=.*of=/dev/", r">\s*/dev/sd[a-z]",
+    r"\bshutdown\b", r"\breboot\b",
+    r"curl.*\|\s*sh", r"wget.*\|\s*sh",                     # remote-script-to-shell piping
+]
+
 SYSTEM_PROMPT = """
-You are an autonomous terminal coding assistant.
+You are an autonomous terminal coding assistant powered by OpenRouter (Deepseek v4 Flash / Gemma).
 
-You have these tools:
+You have these tools available. Always reply ONLY with valid JSON if you want to call a tool:
 
-read_file(path)
-write_file(path, content)
-run_command(command)
-
-When you need one, reply ONLY with JSON.
-
-Example:
-
+1. read_file
 {
-  "tool":"read_file",
-  "path":"main.py"
+  "tool": "read_file",
+  "path": "path/to/file.py"
 }
 
-or
-
+2. write_file
 {
-  "tool":"write_file",
-  "path":"hello.txt",
-  "content":"hello"
+  "tool": "write_file",
+  "path": "path/to/file.py",
+  "content": "file content here"
 }
 
-or
-
+3. grep_search
 {
-  "tool":"run_command",
-  "command":"python main.py"
+  "tool": "grep_search",
+  "pattern": "regex_pattern_here"
 }
 
-When you have the final answer, reply normally.
+4. run_command (or execute_command)
+{
+  "tool": "run_command",
+  "command": "python main.py"
+}
+
+5. web_fetch
+{
+  "tool": "web_fetch",
+  "url": "https://example.com"
+}
+
+When you have the final answer, reply normally in plain text (not in tool JSON format) explaining what was done.
 """
 
 conversation = [
@@ -66,13 +86,16 @@ MAX_MESSAGES = 18
 
 
 def chat(messages):
+    if not OPENROUTER_API_KEY:
+        print("[WARNING] OPENROUTER_API_KEY is not set. Please set it in your environment.")
+
     r = requests.post(
         URL,
         headers=HEADERS,
         json={
             "model": MODEL,
             "messages": messages,
-            "reasoning": {"enabled": True}
+            "reasoning": {"enabled": True} if "deepseek" in MODEL else {}
         },
         timeout=300
     )
@@ -112,33 +135,35 @@ def summarize():
 
 def read_file(path):
     try:
-        with open(path, "r", encoding="utf8") as f:
-            return f.read()
+        target = (WORKSPACE_ROOT / path).resolve()
+        if not target.exists():
+            return f"Error: {path} does not exist."
+        return target.read_text(encoding="utf8")
     except Exception as e:
         return str(e)
 
 
 def write_file(path, content):
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-    except:
-        pass
-
-    try:
-        with open(path, "w", encoding="utf8") as f:
-            f.write(content)
+        target = (WORKSPACE_ROOT / path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf8")
         return "File written."
     except Exception as e:
         return str(e)
 
 
 def run_command(cmd):
+    for pat in BLOCKED_COMMAND_PATTERNS:
+        if re.search(pat, cmd, re.IGNORECASE):
+            return f"Error: Command '{cmd}' blocked for security reasons."
     try:
         result = subprocess.run(
             cmd,
             shell=True,
             capture_output=True,
-            text=True
+            text=True,
+            cwd=str(WORKSPACE_ROOT)
         )
 
         return result.stdout + result.stderr
@@ -147,40 +172,105 @@ def run_command(cmd):
         return str(e)
 
 
-def execute_tool(message):
-
+def grep_search(pattern):
     try:
-        tool = json.loads(message["content"])
+        regex = re.compile(pattern, re.IGNORECASE)
+    except Exception as e:
+        return f"Error: Invalid regex: {e}"
 
-    except:
+    ignore_dirs = {".git", "node_modules", "__pycache__", "venv", ".venv", ".storage"}
+    matches = []
+
+    for root, dirs, files in os.walk(WORKSPACE_ROOT):
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        for name in files:
+            file_path = Path(root) / name
+            try:
+                # Limit size for safety
+                if file_path.stat().st_size > 500_000:
+                    continue
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for i, line in enumerate(f, 1):
+                        if regex.search(line):
+                            rel_path = file_path.relative_to(WORKSPACE_ROOT)
+                            matches.append(f"{rel_path}:{i}: {line.strip()[:150]}")
+                            if len(matches) >= 100:
+                                break
+            except Exception:
+                continue
+            if len(matches) >= 100:
+                break
+        if len(matches) >= 100:
+            break
+
+    return "\n".join(matches) if matches else "No matches found."
+
+
+def web_fetch(url):
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+
+        # Simple extraction of title and body text to fit context gracefully
+        text = r.text
+        if "</html>" in text.lower():
+            # Basic cleanup of script and style tags if HTML
+            text = re.sub(r"<script.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r"<style.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r"<[^>]+>", " ", text)
+            text = re.sub(r"\s+", " ", text).strip()
+
+        return text[:10000]
+    except Exception as e:
+        return f"Error fetching {url}: {e}"
+
+
+def execute_tool(message):
+    try:
+        content = message["content"].strip()
+        # Find JSON block
+        if "{" in content and "}" in content:
+            start_idx = content.find("{")
+            end_idx = content.rfind("}") + 1
+            json_str = content[start_idx:end_idx]
+            tool = json.loads(json_str)
+        else:
+            return None
+    except Exception:
         return None
 
-    if tool.get("tool") == "read_file":
+    tool_name = tool.get("tool")
+    if tool_name == "read_file":
+        return read_file(tool.get("path"))
 
-        return read_file(tool["path"])
+    if tool_name == "write_file":
+        return write_file(tool.get("path"), tool.get("content", ""))
 
-    if tool.get("tool") == "write_file":
+    if tool_name in ("run_command", "execute_command"):
+        return run_command(tool.get("command") or tool.get("cmd"))
 
-        return write_file(
-            tool["path"],
-            tool["content"]
-        )
+    if tool_name == "grep_search":
+        return grep_search(tool.get("pattern"))
 
-    if tool.get("tool") == "run_command":
-
-        return run_command(tool["command"])
+    if tool_name == "web_fetch":
+        return web_fetch(tool.get("url"))
 
     return None
 
 
 print("=" * 60)
-print("Gemma Agent")
+print(f"JARVIS OpenRouter Agent ({MODEL})")
 print("Type exit to quit.")
 print("=" * 60)
 
 while True:
-
-    user = input("\nYou > ")
+    try:
+        user = input("\nYou > ")
+    except KeyboardInterrupt:
+        break
 
     if user.lower() in ("exit", "quit"):
         break
@@ -193,8 +283,11 @@ while True:
     )
 
     while True:
-
-        response = chat(conversation)
+        try:
+            response = chat(conversation)
+        except Exception as e:
+            print(f"\n[OpenRouter Error] {e}")
+            break
 
         conversation.append(
             {
@@ -206,19 +299,17 @@ while True:
         tool_result = execute_tool(response)
 
         if tool_result is None:
-
-            print("\nGemma:\n")
+            print(f"\n{MODEL}:\n")
             print(response["content"])
             break
 
-        print("\n[Tool Executed]\n")
-        print(tool_result)
+        print(f"\n[Tool Executed: {json.loads(response['content'].strip()[response['content'].find('{'):response['content'].rfind('}')+1]).get('tool')}]\n")
+        print(tool_result[:1000] + ("\n...[Truncated]" if len(tool_result) > 1000 else ""))
 
         conversation.append(
             {
                 "role": "user",
-                "content":
-                f"Tool result:\n{tool_result}"
+                "content": f"Tool result:\n{tool_result}"
             }
         )
 
