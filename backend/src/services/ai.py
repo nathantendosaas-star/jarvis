@@ -48,13 +48,20 @@ async def _tool_update_agent(db: AsyncSession, args: Dict[str, Any]) -> str:
     from ..services.agent import AgentService
 
     agent_id = args.get("agent_id", "")
-    data = AgentUpdate(
-        status=args.get("status"),
-        priority=args.get("priority"),
-        cpu_allocation=args.get("cpu_percent"),
-        memory_allocation=args.get("memory_mb"),
-        current_task=args.get("current_task"),
-    )
+
+    update_kwargs = {}
+    if args.get("status") is not None:
+        update_kwargs["status"] = args["status"]
+    if args.get("priority") is not None:
+        update_kwargs["priority"] = args["priority"]
+    if args.get("cpu_percent") is not None:
+        update_kwargs["cpu_allocation"] = args["cpu_percent"]
+    if args.get("memory_mb") is not None:
+        update_kwargs["memory_allocation"] = args["memory_mb"]
+    if args.get("current_task") is not None:
+        update_kwargs["current_task"] = args["current_task"]
+
+    data = AgentUpdate(**update_kwargs)
     agent = await AgentService.update_agent(db, agent_id, data)
     if not agent:
         return json.dumps({"success": False, "error": f"Agent {agent_id} not found."})
