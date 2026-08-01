@@ -80,7 +80,9 @@ export default function SettingsView({
             <div className="space-y-2">
               {[
                 { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite", desc: "Optimized for speed and minimal interaction latencies (Recommended)", badge: "Low Latency" },
-                { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", desc: "General-purpose speed and high accuracy", badge: "Standard" }
+                { id: "gemini-3.5-flash", name: "Gemini 3.5 Flash", desc: "General-purpose speed and high accuracy", badge: "Standard" },
+                { id: "deepseek/deepseek-v4-flash", name: "Deepseek v4 Flash", desc: "Super fast Deepseek flash backup", badge: "OpenRouter" },
+                { id: "gemma-4-31b", name: "Gemma 4 31b", desc: "Google Gemma 2 27B IT backup", badge: "OpenRouter" }
               ].map(model => (
                 <div
                   key={model.id}

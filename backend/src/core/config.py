@@ -12,6 +12,7 @@ class Settings:
     """Central configuration object. Values sourced from .env or OS environment."""
 
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     JARVIS_PASSWORD: str = os.getenv("JARVIS_PASSWORD", "jarvis")
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///.storage/jarvis.db")
     STORAGE_DIR: Path = Path(os.getenv("STORAGE_DIR", ".storage/uploads"))

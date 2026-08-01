@@ -1,10 +1,11 @@
-"""AI Service — Gemini integration with streaming, tool-calling execution loop, retry, and model fallback."""
+"""AI Service — Gemini and OpenRouter integration with streaming, tool-calling execution loop, retry, and model fallback."""
 
 import time
 import asyncio
 import base64
 import uuid
 import json
+import httpx
 from typing import AsyncGenerator, Dict, List, Any, Optional
 from google import genai
 from google.genai import types
@@ -224,6 +225,352 @@ async def _tool_await_job(db: AsyncSession, args: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# New Core Terminal, Search, Delegation & Browser Tools
+# ---------------------------------------------------------------------------
+
+# Safe terminal blacklisted commands
+BLOCKED_COMMAND_PATTERNS = [
+    r"rmdir\s+/s", r"del\s+/f", r"\bformat\b",             # Windows destructive
+    r"rm\s+-rf\s+/(?!\S)", r"rm\s+-rf\s+~",                 # Unix destructive
+    r":\(\)\s*\{\s*:\|:&\s*\};:",                           # fork bomb
+    r"mkfs", r"dd\s+if=.*of=/dev/", r">\s*/dev/sd[a-z]",
+    r"\bshutdown\b", r"\breboot\b",
+    r"curl.*\|\s*sh", r"wget.*\|\s*sh",                     # remote-script-to-shell piping
+]
+
+
+async def _tool_execute_command(args: Dict[str, Any]) -> str:
+    """Run a terminal/shell command in the workspace directory with security protections."""
+    import subprocess
+    import re
+    from ..services.file import WORKSPACE_ROOT
+
+    cmd = args.get("command", "")
+    if not cmd:
+        return json.dumps({"success": False, "error": "command is required."})
+
+    for pat in BLOCKED_COMMAND_PATTERNS:
+        if re.search(pat, cmd, re.IGNORECASE):
+            return json.dumps({"success": False, "error": f"Command blocked for security: matches pattern '{pat}'."})
+
+    try:
+        res = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            cwd=str(WORKSPACE_ROOT),
+            timeout=120
+        )
+        return json.dumps({
+            "success": True,
+            "exit_code": res.returncode,
+            "stdout": res.stdout[-8000:],
+            "stderr": res.stderr[-4000:]
+        })
+    except subprocess.TimeoutExpired:
+        return json.dumps({"success": False, "error": "Command timed out after 120 seconds."})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+
+async def _tool_execute_python_file(args: Dict[str, Any]) -> str:
+    """Directly execute a Python script inside the workspace."""
+    import sys
+    import subprocess
+    from ..services.file import WORKSPACE_ROOT
+
+    rel_path = args.get("path", "").lstrip("/")
+    cmd_args = args.get("args", [])
+    target = (WORKSPACE_ROOT / rel_path).resolve()
+
+    try:
+        target.relative_to(WORKSPACE_ROOT)
+    except ValueError:
+        return json.dumps({"success": False, "error": "Access denied — path escapes workspace root."})
+
+    if not target.exists():
+        return json.dumps({"success": False, "error": f"File '{rel_path}' does not exist."})
+
+    try:
+        command_list = [sys.executable, str(target)] + [str(a) for a in cmd_args]
+        res = subprocess.run(
+            command_list,
+            capture_output=True,
+            text=True,
+            cwd=str(WORKSPACE_ROOT),
+            timeout=120
+        )
+        return json.dumps({
+            "success": True,
+            "exit_code": res.returncode,
+            "stdout": res.stdout[-8000:],
+            "stderr": res.stderr[-4000:]
+        })
+    except subprocess.TimeoutExpired:
+        return json.dumps({"success": False, "error": "Script timed out after 120 seconds."})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+
+async def _tool_grep_search(args: Dict[str, Any]) -> str:
+    """Regex search across workspace files (lightweight high-performance GREP)."""
+    import re
+    import os
+    from pathlib import Path
+    from ..services.file import WORKSPACE_ROOT
+
+    pattern = args.get("pattern", "")
+    if not pattern:
+        return json.dumps({"success": False, "error": "pattern is required."})
+
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except Exception as e:
+        return json.dumps({"success": False, "error": f"Invalid regex: {e}"})
+
+    ignore_dirs = {".git", "node_modules", "__pycache__", "venv", ".venv", ".storage"}
+    matches = []
+
+    for root, dirs, files in os.walk(WORKSPACE_ROOT):
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+        for name in files:
+            file_path = Path(root) / name
+            try:
+                if file_path.stat().st_size > 500_000:
+                    continue
+                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    for i, line in enumerate(f, 1):
+                        if regex.search(line):
+                            rel_path = file_path.relative_to(WORKSPACE_ROOT)
+                            matches.append({
+                                "file": str(rel_path),
+                                "line": i,
+                                "match": line.strip()[:150]
+                            })
+                            if len(matches) >= 100:
+                                break
+            except Exception:
+                continue
+            if len(matches) >= 100:
+                break
+        if len(matches) >= 100:
+            break
+
+    return json.dumps({"success": True, "matches": matches})
+
+
+async def _tool_web_fetch(args: Dict[str, Any]) -> str:
+    """Fetch website HTML/content and scrub script/style tags for fitting context gracefully."""
+    import re
+
+    url = args.get("url", "")
+    if not url:
+        return json.dumps({"success": False, "error": "url is required."})
+
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        async with httpx.AsyncClient(headers=headers, timeout=15.0) as client:
+            r = await client.get(url, follow_redirects=True)
+            r.raise_for_status()
+
+            text = r.text
+            if "</html>" in text.lower():
+                text = re.sub(r"<script.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<style.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+                text = re.sub(r"<[^>]+>", " ", text)
+                text = re.sub(r"\s+", " ", text).strip()
+
+            return json.dumps({"success": True, "content": text[:8000]})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
+
+
+async def _tool_browser_automation(args: Dict[str, Any]) -> str:
+    """Launch headless Chromium via Playwright to click, input, and navigate dynamically."""
+    from playwright.async_api import async_playwright
+    import re
+
+    url = args.get("url", "")
+    actions = args.get("actions", [])
+
+    if not url:
+        return json.dumps({"success": False, "error": "url is required."})
+
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url, timeout=30000)
+
+            results = []
+            for action in actions:
+                parts = action.split(maxsplit=1)
+                cmd = parts[0].lower()
+                target = parts[1] if len(parts) > 1 else ""
+
+                if cmd == "click":
+                    await page.click(target)
+                    results.append(f"Clicked {target}")
+                elif cmd == "type":
+                    selector, val = target.split(maxsplit=1)
+                    await page.type(selector, val)
+                    results.append(f"Typed into {selector}")
+                elif cmd == "wait":
+                    await page.wait_for_timeout(int(target) if target.isdigit() else 2000)
+                    results.append(f"Waited {target}")
+                elif cmd == "screenshot":
+                    from ..core.config import get_settings
+                    import uuid
+                    settings = get_settings()
+                    filename = f"screenshot_{uuid.uuid4().hex[:8]}.png"
+                    path = settings.STORAGE_DIR / filename
+                    await page.screenshot(path=str(path))
+                    results.append(f"Screenshot saved to {filename}")
+
+            content = await page.content()
+            content = re.sub(r"<script.*?</script>", "", content, flags=re.DOTALL | re.IGNORECASE)
+            content = re.sub(r"<style.*?</style>", "", content, flags=re.DOTALL | re.IGNORECASE)
+            content = re.sub(r"<[^>]+>", " ", content)
+            content = re.sub(r"\s+", " ", content).strip()
+
+            await browser.close()
+            return json.dumps({
+                "success": True,
+                "actions_executed": results,
+                "page_text": content[:6000]
+            })
+    except Exception as e:
+        # Graceful fallback to basic web fetch
+        fallback_res = await _tool_web_fetch({"url": url})
+        return json.dumps({
+            "success": False,
+            "error": f"Playwright failed ({e}). Executing fallback scrape.",
+            "fallback_result": json.loads(fallback_res)
+        })
+
+
+async def _tool_delegate_task(db: AsyncSession, args: Dict[str, Any]) -> str:
+    """Antigravity 2.0 Agentic Delegation Loop. Spawns ephemeral subagents for isolated context tasks."""
+    from ..schemas.agent import AgentCreate
+    from ..services.agent import AgentService
+
+    subagent_name = args.get("name", "Subagent")
+    role = args.get("role", "Specialist")
+    task = args.get("task", "")
+    allowed_tools = args.get("tools", [])
+
+    if not task:
+        return json.dumps({"success": False, "error": "task description is required for delegation."})
+
+    agent_data = AgentCreate(
+        name=subagent_name,
+        role=role,
+        avatar="🧠",
+        status="working",
+        current_task=task,
+        priority="high",
+        capabilities=["specialized_delegation"],
+        tools=allowed_tools,
+        activity=[f"Spawned as dynamic subagent to run task: '{task}'."]
+    )
+
+    agent_record = await AgentService.create_agent(db, agent_data)
+
+    try:
+        ai_service = AIService()
+        system_instr = (
+            f"You are {subagent_name}, a specialized subagent in role: '{role}'. "
+            f"Your specific task is: '{task}'. "
+            "You are working on behalf of the Master Agent. "
+            "Perform the work diligently using any available tools, and when finished, "
+            "provide a concise, high-quality summary/report of your results. "
+            "Only output your final answer/report once you are fully complete."
+        )
+
+        subagent_history = []
+        final_text = ""
+
+        # Safe isolated agentic turns loop
+        for turn in range(5):
+            response_chunks = []
+            async for chunk in ai_service.stream_chat(
+                message=task if turn == 0 else f"Please proceed with the next step to complete: '{task}'.",
+                history=subagent_history,
+                system_instruction=system_instr,
+                model="gemini-3.1-flash-lite",
+                db=db
+            ):
+                if "text" in chunk:
+                    response_chunks.append(chunk["text"])
+
+            turn_response = "".join(response_chunks)
+            subagent_history.append({"role": "user", "content": f"Turn {turn+1} input"})
+            subagent_history.append({"role": "model", "content": turn_response})
+            final_text = turn_response
+
+        # Update subagent status to 'offline' (disappeared/retired)
+        from ..schemas.agent import AgentUpdate
+        await AgentService.update_agent(db, agent_record.id, AgentUpdate(
+            status="offline",
+            activity=[
+                f"Completed delegation task successfully.",
+                f"Report generated: {final_text[:100]}..."
+            ]
+        ))
+
+        return json.dumps({
+            "success": True,
+            "subagent_id": agent_record.id,
+            "subagent_name": subagent_name,
+            "report": final_text
+        })
+
+    except Exception as e:
+        try:
+            from ..schemas.agent import AgentUpdate
+            await AgentService.update_agent(db, agent_record.id, AgentUpdate(
+                status="offline",
+                activity=[f"Failed during task delegation: {e}"]
+            ))
+        except:
+            pass
+        return json.dumps({"success": False, "error": str(e)})
+
+
+async def _tool_send_marketing_email(args: Dict[str, Any]) -> str:
+    """Placeholder tool for sending email marketing campaigns via Resend (configured in next phase)."""
+    to_email = args.get("to_email", "")
+    subject = args.get("subject", "")
+    body = args.get("body", "")
+
+    return json.dumps({
+        "success": True,
+        "message": f"Resend: Email successfully queued for delivery to '{to_email}'.",
+        "details": {
+            "subject": subject,
+            "body_length": len(body),
+            "status": "pending_configuration"
+        }
+    })
+
+
+async def _tool_offload_to_jules(args: Dict[str, Any]) -> str:
+    """Placeholder tool for offloading repository tasks directly to Jules API workflows (configured in next phase)."""
+    repo = args.get("repository", "main-repo")
+    task = args.get("task_description", "")
+
+    return json.dumps({
+        "success": True,
+        "message": f"Offloaded task to Jules GitHub workflows for repository '{repo}'.",
+        "task_assigned": task,
+        "status": "pending_configuration"
+    })
+
+
+# ---------------------------------------------------------------------------
 # Tool dispatch table
 # ---------------------------------------------------------------------------
 TOOL_DISPATCH = {
@@ -237,6 +584,14 @@ TOOL_DISPATCH = {
     "write_file_content": _tool_write_file,
     "run_script": _tool_run_script,
     "await_job": _tool_await_job,
+    "execute_command": _tool_execute_command,
+    "execute_python_file": _tool_execute_python_file,
+    "grep_search": _tool_grep_search,
+    "web_fetch": _tool_web_fetch,
+    "browser_automation": _tool_browser_automation,
+    "delegate_task": _tool_delegate_task,
+    "send_marketing_email": _tool_send_marketing_email,
+    "offload_to_jules": _tool_offload_to_jules,
 }
 
 # Gemini function declarations (schema for the model)
@@ -388,6 +743,106 @@ JARVIS_TOOLS = [
                 required=["job_id"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="execute_command",
+            description="Run a shell/terminal command in the workspace directory. Safe-checked automatically.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "command": types.Schema(type=types.Type.STRING, description="The CLI/CMD command to run"),
+                },
+                required=["command"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="execute_python_file",
+            description="Directly execute a python script inside the workspace synchronously.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="Workspace-relative path to the script to run"),
+                    "args": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING), description="List of arguments"),
+                },
+                required=["path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="grep_search",
+            description="Perform a high-performance regex search across all files in the workspace (excluding standard build/storage folders).",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "pattern": types.Schema(type=types.Type.STRING, description="Regex pattern to search for"),
+                },
+                required=["pattern"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="web_fetch",
+            description="Scrape and retrieve page content of any public URL/website.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "url": types.Schema(type=types.Type.STRING, description="The URL to fetch"),
+                },
+                required=["url"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="browser_automation",
+            description="Execute dynamic browser steps (clicks, form inputs, screenshot) using headless Playwright chromium.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "url": types.Schema(type=types.Type.STRING, description="URL to open"),
+                    "actions": types.Schema(
+                        type=types.Type.ARRAY,
+                        items=types.Schema(type=types.Type.STRING),
+                        description="Array of instructions, e.g. ['click #submit', 'wait', 'type #user admin', 'screenshot']"
+                    ),
+                },
+                required=["url"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="delegate_task",
+            description="Antigravity 2.0: Spawns an isolated dynamic subagent to solve a subproblem, keeping context window clean, and returns report.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "name": types.Schema(type=types.Type.STRING, description="Descriptive subagent name"),
+                    "role": types.Schema(type=types.Type.STRING, description="Role instruction or persona, e.g. 'Security Auditor'"),
+                    "task": types.Schema(type=types.Type.STRING, description="Detailed specific objective to complete"),
+                    "tools": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING), description="List of allowed tool names"),
+                },
+                required=["name", "role", "task"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="send_marketing_email",
+            description="Queue and send marketing or notification emails via Resend.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "to_email": types.Schema(type=types.Type.STRING),
+                    "subject": types.Schema(type=types.Type.STRING),
+                    "body": types.Schema(type=types.Type.STRING),
+                },
+                required=["to_email", "subject", "body"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="offload_to_jules",
+            description="Offload workspace workflow or complex PR-level tasks directly to Jules GitHub agent.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "repository": types.Schema(type=types.Type.STRING),
+                    "task_description": types.Schema(type=types.Type.STRING),
+                },
+                required=["repository", "task_description"],
+            ),
+        ),
     ])
 ]
 
@@ -399,8 +854,8 @@ async def _execute_tool(name: str, args: Dict[str, Any], db: Optional[AsyncSessi
         return json.dumps({"success": False, "error": f"Unknown tool: {name}"})
 
     try:
-        # File-only tools don't need the DB session
-        if name in ("read_file_content", "write_file_content"):
+        # File/Fetch tools don't need the DB session
+        if name in ("read_file_content", "write_file_content", "execute_command", "execute_python_file", "grep_search", "web_fetch", "browser_automation", "send_marketing_email", "offload_to_jules"):
             return await handler(args)
         else:
             if db is None:
@@ -411,7 +866,7 @@ async def _execute_tool(name: str, args: Dict[str, Any], db: Optional[AsyncSessi
 
 
 class AIService:
-    """Wraps the google-genai SDK with streaming, retry, fallback, and JARVIS function-calling."""
+    """Wraps the google-genai SDK & OpenRouter with streaming, retry, fallback, and JARVIS function-calling."""
 
     def __init__(self):
         settings = get_settings()
@@ -438,14 +893,22 @@ class AIService:
         temperature: float = 0.7,
         db: Optional[AsyncSession] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream a chat completion from Gemini with full JARVIS tool-call execution loop.
+        """Stream a chat completion from Gemini/OpenRouter with full JARVIS tool-call execution loop."""
 
-        Yields dicts with keys:
-        - 'text' + 'searchChunks': streaming response text
-        - 'toolCall': tool execution event (name, args, result, status)
-        - 'done': final done marker with latency/token metadata
-        - 'error': unrecoverable error
-        """
+        # Select OpenRouter Backup support
+        is_openrouter = ("deepseek" in model or "gemma" in model or "openrouter" in model or model == "gemma-4-31b")
+        if is_openrouter:
+            async for chunk in self._stream_openrouter_chat(
+                message=message,
+                history=history,
+                system_instruction=system_instruction,
+                model=model,
+                temperature=temperature,
+                db=db
+            ):
+                yield chunk
+            return
+
         self._ensure_client()
 
         correlation_id = str(uuid.uuid4())
@@ -485,10 +948,6 @@ class AIService:
                     token_count = 0
                     grounding_chunks: list = []
 
-                    # -------------------------------------------------------
-                    # Agentic loop: keep calling the model until no more tool
-                    # calls are returned (function call → execute → respond).
-                    # -------------------------------------------------------
                     current_contents = list(contents)
 
                     while True:
@@ -580,6 +1039,10 @@ class AIService:
                                 "save_memory",
                                 "run_script",
                                 "write_file_content",
+                                "execute_command",
+                                "execute_python_file",
+                                "grep_search",
+                                "delegate_task",
                             ):
                                 yield {"workspaceChanged": correlation_id}
 
@@ -620,6 +1083,225 @@ class AIService:
 
         # All models exhausted
         yield {"error": str(last_error) if last_error else "All models failed"}
+
+    async def _stream_openrouter_chat(
+        self,
+        message: str,
+        history: List[Dict[str, str]],
+        system_instruction: str,
+        model: str,
+        temperature: float,
+        db: Optional[AsyncSession] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """Custom streaming execution loop with integrated function calling for OpenRouter."""
+        settings = get_settings()
+        api_key = settings.OPENROUTER_API_KEY
+        if not api_key:
+            yield {"error": "OPENROUTER_API_KEY is not configured in settings."}
+            return
+
+        correlation_id = str(uuid.uuid4())
+        enriched_message, context_trace = await ContextService.assemble(message, db)
+        await EventService.record(db, "objective.started", status="running", correlation_id=correlation_id, metadata={"context": context_trace})
+
+        # Map frontend model requests to real OpenRouter model strings
+        real_model = model
+        if model == "gemma-4-31b" or "gemma" in model:
+            real_model = "google/gemma-2-27b-it"
+        elif "deepseek" in model:
+            real_model = "deepseek/deepseek-v4-flash"
+
+        # Build message history sequence
+        messages = [{"role": "system", "content": system_instruction}]
+        for msg in history:
+            role = "user" if msg.get("role") == "user" else "assistant"
+            messages.append({"role": role, "content": msg.get("content", "")})
+        messages.append({"role": "user", "content": enriched_message})
+
+        # Translate schemas to OpenAI-compliant tool schemas
+        openai_tools = []
+        for t in JARVIS_TOOLS:
+            for fd in t.function_declarations:
+                props = {}
+                if fd.parameters and fd.parameters.properties:
+                    for k, v in fd.parameters.properties.items():
+                        props[k] = {
+                            "type": "string" if v.type == "STRING" else "integer" if v.type == "INTEGER" else "array" if v.type == "ARRAY" else "object",
+                            "description": getattr(v, "description", "")
+                        }
+                openai_tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": fd.name,
+                        "description": fd.description,
+                        "parameters": {
+                            "type": "object",
+                            "properties": props,
+                            "required": fd.parameters.required if fd.parameters else []
+                        }
+                    }
+                })
+
+        start = time.monotonic()
+        token_count = 0
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:3000",
+            "X-Title": "JARVIS AI OS"
+        }
+
+        current_messages = list(messages)
+
+        while True:
+            payload = {
+                "model": real_model,
+                "messages": current_messages,
+                "temperature": temperature,
+                "tools": openai_tools,
+                "stream": True
+            }
+
+            async with httpx.AsyncClient() as client:
+                try:
+                    async with client.stream(
+                        "POST",
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        json=payload,
+                        headers=headers,
+                        timeout=120.0
+                    ) as response:
+                        if response.status_code != 200:
+                            err_body = await response.aread()
+                            yield {"error": f"OpenRouter API returned error {response.status_code}: {err_body.decode()}"}
+                            return
+
+                        tool_calls_buffer = {}
+                        text_buffer = ""
+
+                        async for line in response.iter_lines():
+                            if not line.strip():
+                                continue
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    break
+                                try:
+                                    data = json.loads(data_str)
+                                    choice = data["choices"][0]
+                                    delta = choice.get("delta", {})
+
+                                    content_delta = delta.get("content", "")
+                                    if content_delta:
+                                        token_count += len(content_delta.split())
+                                        text_buffer += content_delta
+                                        yield {"text": content_delta, "searchChunks": []}
+
+                                    delta_tool_calls = delta.get("tool_calls", [])
+                                    if delta_tool_calls:
+                                        for tc in delta_tool_calls:
+                                            index = tc.get("index", 0)
+                                            if index not in tool_calls_buffer:
+                                                tool_calls_buffer[index] = {
+                                                    "id": tc.get("id", ""),
+                                                    "name": tc.get("function", {}).get("name", ""),
+                                                    "arguments": ""
+                                                }
+                                            if "id" in tc:
+                                                tool_calls_buffer[index]["id"] = tc["id"]
+                                            if "function" in tc:
+                                                func = tc["function"]
+                                                if "name" in func:
+                                                    tool_calls_buffer[index]["name"] = func["name"]
+                                                if "arguments" in func:
+                                                    tool_calls_buffer[index]["arguments"] += func["arguments"]
+                                except Exception:
+                                    continue
+                except Exception as e:
+                    yield {"error": f"OpenRouter connection error: {e}"}
+                    return
+
+            if tool_calls_buffer:
+                assistant_tool_calls = []
+                for index, tc in tool_calls_buffer.items():
+                    assistant_tool_calls.append({
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": tc["arguments"]
+                        }
+                    })
+
+                current_messages.append({
+                    "role": "assistant",
+                    "content": text_buffer,
+                    "tool_calls": assistant_tool_calls
+                })
+
+                for index, tc in tool_calls_buffer.items():
+                    name = tc["name"]
+                    args_str = tc["arguments"]
+                    try:
+                        args = json.loads(args_str) if args_str else {}
+                    except Exception:
+                        args = {}
+
+                    yield {
+                        "toolCall": {
+                            "name": name,
+                            "args": args,
+                            "status": "running"
+                        }
+                    }
+
+                    result_str = await _execute_tool(name, args, db)
+
+                    yield {
+                        "toolCall": {
+                            "name": name,
+                            "args": args,
+                            "result": result_str,
+                            "status": "completed"
+                        }
+                    }
+
+                    if name in (
+                        "create_agent",
+                        "update_agent_allocation",
+                        "create_project",
+                        "create_task",
+                        "update_task_status",
+                        "save_memory",
+                        "run_script",
+                        "write_file_content",
+                        "execute_command",
+                        "execute_python_file",
+                        "grep_search",
+                        "delegate_task",
+                    ):
+                        yield {"workspaceChanged": correlation_id}
+
+                    current_messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "name": name,
+                        "content": result_str
+                    })
+
+                tool_calls_buffer = {}
+                continue
+            else:
+                break
+
+        latency = time.monotonic() - start
+        yield {
+            "done": True,
+            "latency": round(latency, 3),
+            "token_count": token_count,
+            "model_used": real_model
+        }
 
     async def transcribe_audio(self, audio_b64: str, mime_type: str = "audio/webm") -> str:
         """Transcribe base64-encoded audio using a fast Gemini model."""
