@@ -19,8 +19,58 @@ class AgentService:
 
     @staticmethod
     async def create_agent(db: AsyncSession, data: AgentCreate) -> Agent:
+        import uuid
+        from pathlib import Path
+        from datetime import datetime, timezone
+
+        agent_id = str(uuid.uuid4())
+
+        # Initialize context cache files
+        cached_dir = Path("Cached")
+        cached_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        name_clean = data.name.replace(" ", "_")
+
+        tasks_filename = f"{name_clean}_{agent_id[:8]}_{timestamp}_tasks.md"
+        history_filename = f"{name_clean}_{agent_id[:8]}_{timestamp}_history.md"
+        progress_filename = f"{name_clean}_{agent_id[:8]}_{timestamp}_progress.md"
+
+        tasks_path = cached_dir / tasks_filename
+        history_path = cached_dir / history_filename
+        progress_path = cached_dir / progress_filename
+
+        tasks_content = f"""# Assigned Tasks for {data.name}
+Created: {datetime.now(timezone.utc).isoformat()}
+Role: {data.role}
+
+## Tasks
+- [ ] Initialize system and capabilities
+"""
+        history_content = f"""# History Log for {data.name}
+Created: {datetime.now(timezone.utc).isoformat()}
+
+## Activity History
+- [{datetime.now(timezone.utc).isoformat()}] Agent node initialized and workspace cache created.
+"""
+        progress_content = f"""# Progress Status for {data.name}
+Created: {datetime.now(timezone.utc).isoformat()}
+
+## Status
+- **Current Task**: Initialized
+- **Overall Progress**: 100%
+- **Status**: Ready
+"""
+
+        try:
+            tasks_path.write_text(tasks_content, encoding="utf-8")
+            history_path.write_text(history_content, encoding="utf-8")
+            progress_path.write_text(progress_content, encoding="utf-8")
+        except Exception:
+            pass
+
         agent = Agent(
-            id=str(uuid.uuid4()),
+            id=agent_id,
             name=data.name,
             role=data.role,
             avatar=data.avatar,
@@ -73,10 +123,24 @@ class AgentService:
         return agent
 
     @staticmethod
-    async def delete_agent(db: AsyncSession, agent_id: str) -> bool:
+    async def delete_agent(db: AsyncSession, agent_id: str, delete_cache: bool = False) -> bool:
         agent = await db.get(Agent, agent_id)
         if not agent:
             return False
+
+        if delete_cache:
+            from pathlib import Path
+            cached_dir = Path("Cached")
+            if cached_dir.exists():
+                name_clean = agent.name.replace(" ", "_")
+                for f in cached_dir.iterdir():
+                    if f.is_file():
+                        if agent_id in f.name or agent_id[:8] in f.name or (name_clean and name_clean in f.name):
+                            try:
+                                f.unlink()
+                            except Exception:
+                                pass
+
         await db.delete(agent)
         await db.flush()
         await event_broker.publish("AgentDecommissioned", {"agent_id": agent_id})
