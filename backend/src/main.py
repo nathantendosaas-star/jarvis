@@ -48,7 +48,7 @@ app.add_middleware(
 
 
 # --- Router imports ---
-from .api import auth, projects, chats, files, tasks, memories, settings, agents, events, jobs  # noqa: E402
+from .api import auth, projects, chats, files, tasks, memories, settings, agents, events, jobs, agentic_core  # noqa: E402
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
@@ -60,6 +60,7 @@ app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
+app.include_router(agentic_core.router, prefix="/api/agentic-core", tags=["agentic-core"])
 
 
 # Compatibility routes used by the Vite frontend during local development.
