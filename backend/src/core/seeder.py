@@ -76,30 +76,5 @@ DEFAULT_AGENTS = [
 
 async def seed_agents(db: AsyncSession) -> int:
     """Insert default agents only if the agents table is empty. Returns count inserted."""
-    result = await db.execute(select(func.count()).select_from(Agent))
-    count = result.scalar_one()
-    if count > 0:
-        return 0  # Already seeded — skip
-
-    import uuid
-    inserted = 0
-    for data in DEFAULT_AGENTS:
-        agent = Agent(
-            id=str(uuid.uuid4()),
-            name=data["name"],
-            role=data["role"],
-            avatar=data["avatar"],
-            status=data["status"],
-            priority=data["priority"],
-            cpu_allocation=data["cpu_allocation"],
-            memory_allocation=data["memory_allocation"],
-            capabilities=json.dumps(data["capabilities"]),
-            tools=json.dumps(data["tools"]),
-            activity=json.dumps(data["activity"]),
-            performance=data["performance"],
-        )
-        db.add(agent)
-        inserted += 1
-
-    await db.commit()
-    return inserted
+    # Disabled default seeding: agents should only be there if explicitly saved with cached context
+    return 0

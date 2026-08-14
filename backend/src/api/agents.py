@@ -42,9 +42,9 @@ async def update_agent(agent_id: str, data: AgentUpdate, db: AsyncSession = Depe
 
 
 @router.delete("/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
-    """Decommission and remove an agent from the workforce."""
-    success = await AgentService.delete_agent(db, agent_id)
+async def delete_agent(agent_id: str, delete_cache: bool = False, db: AsyncSession = Depends(get_db)):
+    """Decommission and remove an agent from the workforce, optionally deleting their cache files."""
+    success = await AgentService.delete_agent(db, agent_id, delete_cache=delete_cache)
     if not success:
         raise HTTPException(status_code=404, detail="Agent not found")
     return None

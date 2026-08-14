@@ -179,6 +179,20 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleNotification = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail) {
+        const { title, message, type } = customEvent.detail;
+        triggerNotification(title, message, type);
+      }
+    };
+    window.addEventListener("jarvis:notification", handleNotification);
+    return () => {
+      window.removeEventListener("jarvis:notification", handleNotification);
+    };
+  }, []);
+
   const reloadWorkspaceData = async () => {
     setDataStatus("loading");
     try {
@@ -211,6 +225,32 @@ export default function App() {
       setAgents(prev => prev.map(a => (a.id === agentId ? updated : a)));
     } catch {
       triggerNotification("Agent Sync Failed", "Could not persist agent update to backend.", "error");
+    }
+  };
+
+  const handleDeleteAgent = async (agentId: string, deleteCache: boolean = false) => {
+    try {
+      await apiDeleteAgent(agentId, deleteCache);
+      setAgents(prev => prev.filter(a => a.id !== agentId));
+      triggerNotification("Agent Decommissioned", "The agent has been successfully removed from workforce.", "success");
+    } catch {
+      triggerNotification("Agent Decommission Failed", "Could not remove the agent.", "error");
+    }
+  };
+
+  const handleCreateAgent = async (data: {
+    name: string;
+    role: string;
+    avatar?: string;
+    capabilities?: string[];
+    tools?: string[];
+  }) => {
+    try {
+      const created = await apiCreateAgent(data);
+      setAgents(prev => [created, ...prev]);
+      triggerNotification("Agent Created", `${data.name} is now active with cached context.`, "success");
+    } catch {
+      triggerNotification("Agent Creation Failed", "Could not persist new agent.", "error");
     }
   };
 
@@ -366,6 +406,8 @@ export default function App() {
                 agents={agents}
                 setAgents={setAgents}
                 onUpdateAgent={handleUpdateAgent}
+                onDeleteAgent={handleDeleteAgent}
+                onCreateAgent={handleCreateAgent}
                 triggerNotification={triggerNotification}
               />
             )}

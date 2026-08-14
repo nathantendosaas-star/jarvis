@@ -11,7 +11,8 @@ import {
   Sparkles,
   RefreshCw,
   Activity,
-  MoreVertical
+  MoreVertical,
+  Trash2
 } from "lucide-react";
 import {
   AreaChart,
@@ -22,6 +23,17 @@ import {
   Tooltip
 } from "recharts";
 import { Agent } from "../types";
+
+const AVAILABLE_TOOLS = [
+  "read_file_content",
+  "write_file_content",
+  "execute_command",
+  "execute_python_file",
+  "grep_search",
+  "web_fetch",
+  "browser_automation",
+  "save_memory"
+];
 
 interface AgentsViewProps {
   agents: Agent[];
@@ -37,6 +49,14 @@ interface AgentsViewProps {
       activity?: string[];
     }
   ) => Promise<void>;
+  onDeleteAgent: (agentId: string, deleteCache: boolean) => Promise<void>;
+  onCreateAgent: (data: {
+    name: string;
+    role: string;
+    avatar?: string;
+    capabilities?: string[];
+    tools?: string[];
+  }) => Promise<void>;
   triggerNotification: (title: string, msg: string, type: any) => void;
 }
 
@@ -64,9 +84,20 @@ export default function AgentsView({
   agents,
   setAgents,
   onUpdateAgent,
+  onDeleteAgent,
+  onCreateAgent,
   triggerNotification,
 }: AgentsViewProps) {
   const [openMenuAgentId, setOpenMenuAgentId] = useState<string | null>(null);
+  const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+
+  // Form states
+  const [newName, setNewName] = useState("");
+  const [newRole, setNewRole] = useState("");
+  const [newAvatar, setNewAvatar] = useState("🤖");
+  const [newCapabilities, setNewCapabilities] = useState("");
+  const [newTools, setNewTools] = useState<string[]>([]);
 
   useEffect(() => {
     const handleOutsideClick = () => setOpenMenuAgentId(null);
@@ -161,6 +192,33 @@ export default function AgentsView({
     onUpdateAgent(id, patch);
   };
 
+  const handleCreateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newName.trim() || !newRole.trim()) {
+      triggerNotification("Input Required", "Please provide both Name and Role.", "warning");
+      return;
+    }
+    const capabilitiesList = newCapabilities
+      ? newCapabilities.split(",").map(c => c.trim()).filter(Boolean)
+      : [];
+
+    await onCreateAgent({
+      name: newName,
+      role: newRole,
+      avatar: newAvatar,
+      capabilities: capabilitiesList,
+      tools: newTools
+    });
+
+    // Reset fields & close
+    setNewName("");
+    setNewRole("");
+    setNewAvatar("🤖");
+    setNewCapabilities("");
+    setNewTools([]);
+    setShowCreateModal(false);
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6 text-slate-200">
       
@@ -170,8 +228,15 @@ export default function AgentsView({
           <h1 className="text-xl font-display font-bold text-white tracking-wide mt-0.5">Agent Workforce</h1>
           <p className="text-xs text-slate-400 mt-1">Deploy, monitor, and configure specialized AI agents in your environment.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
           <span className="text-xs font-mono text-slate-400">Active Agents: {agents.filter(a => a.status === 'working').length}</span>
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shadow"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Create Agent</span>
+          </button>
         </div>
       </div>
 
@@ -277,6 +342,18 @@ export default function AgentsView({
                   >
                     <RefreshCw className="w-3.5 h-3.5 text-blue-400" />
                     <span>Restart / Reboot Node</span>
+                  </button>
+
+                  {/* Decommission Agent */}
+                  <button
+                    onClick={() => {
+                      setDeletingAgent(agent);
+                      setOpenMenuAgentId(null);
+                    }}
+                    className="w-full text-left flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs hover:bg-red-950/40 text-red-400 hover:text-red-300 transition-all cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-red-500" />
+                    <span>Decommission Agent</span>
                   </button>
 
                   <div className="border-t border-slate-900/60 my-1 pt-1" />
@@ -460,6 +537,155 @@ export default function AgentsView({
           );
         })}
       </div>
+
+      {/* Decommission Agent Modal */}
+      {deletingAgent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center gap-3 text-red-400">
+              <Trash2 className="w-5 h-5" />
+              <h3 className="text-sm font-bold text-white">Decommission {deletingAgent.name}?</h3>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Are you sure you want to decommission <strong>{deletingAgent.name}</strong>? You can optionally delete their cached context files (detailed MD tasks, history, and progress logs) from the <code>Cached/</code> workspace folder.
+            </p>
+
+            <div className="flex flex-col gap-2 pt-2">
+              <button
+                onClick={async () => {
+                  const agentId = deletingAgent.id;
+                  setDeletingAgent(null);
+                  await onDeleteAgent(agentId, true);
+                }}
+                className="w-full py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
+              >
+                Decommission Agent & Delete Cache
+              </button>
+              <button
+                onClick={async () => {
+                  const agentId = deletingAgent.id;
+                  setDeletingAgent(null);
+                  await onDeleteAgent(agentId, false);
+                }}
+                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+              >
+                Decommission Agent Only (Keep Cache)
+              </button>
+              <button
+                onClick={() => setDeletingAgent(null)}
+                className="w-full py-2 border border-slate-800 hover:bg-slate-900 text-slate-400 rounded-lg text-xs font-medium transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Agent Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4">
+          <form onSubmit={handleCreateSubmit} className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-md w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center gap-3 text-blue-400">
+              <Sparkles className="w-5 h-5" />
+              <h3 className="text-sm font-bold text-white">Create New Agent</h3>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              Initialize a persistent specialized agent with their automatic context cache files in the <code>Cached/</code> workspace folder.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Agent Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Lead Scraper, Data Synthesizer"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Role / Persona *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Market Research Specialist"
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Emoji Avatar</label>
+                <input
+                  type="text"
+                  maxLength={2}
+                  placeholder="🤖"
+                  value={newAvatar}
+                  onChange={(e) => setNewAvatar(e.target.value)}
+                  className="w-12 text-center bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Capabilities (comma separated)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Scrape Web, Filter Leads, Summarize Content"
+                  value={newCapabilities}
+                  onChange={(e) => setNewCapabilities(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1.5">Tool Access</label>
+                <div className="grid grid-cols-2 gap-2 bg-slate-950 p-3 border border-slate-800 rounded-lg max-h-36 overflow-y-auto font-mono">
+                  {AVAILABLE_TOOLS.map(t => (
+                    <label key={t} className="flex items-center gap-2 text-[10px] text-slate-400 hover:text-white cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={newTools.includes(t)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setNewTools(prev => [...prev, t]);
+                          } else {
+                            setNewTools(prev => prev.filter(tool => tool !== t));
+                          }
+                        }}
+                        className="accent-blue-500"
+                      />
+                      <span className="truncate">{t}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(false)}
+                className="flex-1 py-2 border border-slate-800 hover:bg-slate-900 text-slate-400 rounded-lg text-xs font-medium transition-all cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
+              >
+                Save & Initialize Cache
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
     </div>
   );

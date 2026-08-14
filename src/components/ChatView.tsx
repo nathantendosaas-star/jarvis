@@ -33,6 +33,64 @@ interface ChatViewProps {
   onMicActiveChange?: (active: boolean, stream?: MediaStream) => void;
 }
 
+function renderInlineMarkdown(text: string) {
+  const parts = text.split("**");
+  return parts.map((part, index) => {
+    if (index % 2 === 1) {
+      return (
+        <strong key={index} className="font-bold text-white">
+          {part}
+        </strong>
+      );
+    }
+    return part;
+  });
+}
+
+function renderMarkdown(content: string) {
+  const lines = content.split("\n");
+  return lines.map((line, idx) => {
+    const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headerMatch) {
+      const level = headerMatch[1].length;
+      let text = headerMatch[2];
+      text = text.replace(/\*\*/g, ""); // Strip raw bold asterisks from inside headers
+      const className =
+        level === 1
+          ? "text-lg font-bold text-white mt-4 mb-2 block"
+          : level === 2
+          ? "text-base font-bold text-white mt-3 mb-2 block"
+          : "text-xs font-bold text-purple-350 mt-2 mb-1 block";
+      return (
+        <span key={idx} className={className}>
+          {text}
+        </span>
+      );
+    }
+
+    const bulletMatch = line.match(/^(\*\s+|\-\s+|\u2022\s+)(.*)$/);
+    if (bulletMatch) {
+      const text = bulletMatch[2];
+      return (
+        <span key={idx} className="flex items-start gap-2 pl-3 my-1 leading-relaxed text-slate-300">
+          <span className="text-purple-400 mt-1 shrink-0 select-none text-[8px]">•</span>
+          <span>{renderInlineMarkdown(text)}</span>
+        </span>
+      );
+    }
+
+    if (line.trim() === "") {
+      return <span key={idx} className="block h-2" />;
+    }
+
+    return (
+      <span key={idx} className="block leading-relaxed my-0.5">
+        {renderInlineMarkdown(line)}
+      </span>
+    );
+  });
+}
+
 export default function ChatView({
   messages,
   setMessages,
@@ -248,6 +306,11 @@ export default function ChatView({
                 // ── Tool-call event ──────────────────────────────────────────
                 if (dataObj.workspaceChanged) {
                 window.dispatchEvent(new CustomEvent("jarvis:workspace-changed", { detail: dataObj.workspaceChanged }));
+                continue;
+              }
+
+              if (dataObj.notification) {
+                window.dispatchEvent(new CustomEvent("jarvis:notification", { detail: dataObj.notification }));
                 continue;
               }
 
@@ -480,7 +543,7 @@ export default function ChatView({
                       </div>
                     )}
                     <div className="whitespace-pre-wrap font-sans break-words selection:bg-blue-500/30">
-                      {msg.content}
+                      {renderMarkdown(msg.content)}
                     </div>
                   </>
                 )}
