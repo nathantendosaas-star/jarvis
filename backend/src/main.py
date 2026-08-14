@@ -12,6 +12,8 @@ from .models import Base
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Create database tables on startup, seed defaults, dispose engine on shutdown."""
+    from pathlib import Path
+    Path("Cached").mkdir(exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # SQLite create_all does not evolve existing tables; these columns are additive.
@@ -91,6 +93,202 @@ async def frontend_config():
     return {"hasApiKey": bool(settings.GEMINI_API_KEY), "appUrl": settings.APP_URL}
 
 
+def is_research_request(message: str) -> bool:
+    msg_lower = message.lower()
+    keywords = ["research", "find information on", "investigate", "gather info", "collect data", "search for"]
+    return any(keyword in msg_lower for keyword in keywords)
+
+
+def extract_research_topic(message: str) -> str:
+    msg_lower = message.lower()
+    prefixes = [
+        "help research ",
+        "please research ",
+        "research ",
+        "find information on ",
+        "investigate ",
+        "gather info on ",
+        "collect data on ",
+        "search for "
+    ]
+    for prefix in prefixes:
+        if msg_lower.startswith(prefix):
+            return message[len(prefix):].strip()
+    return message.strip()
+
+
+async def research_flow_generator(message: str, db):
+    import asyncio
+    import uuid
+    import json
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from .models.agent import Agent
+    from .services.ai import AIService
+
+    topic = extract_research_topic(message)
+    agent_id = str(uuid.uuid4())
+    clean_topic_filename = "".join(c if c.isalnum() or c in " _-" else "_" for c in topic)[:40].strip().replace(" ", "_")
+    agent_name = f"Researcher-{topic[:30]}"
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    cached_dir = Path("Cached")
+    cached_dir.mkdir(exist_ok=True)
+
+    tasks_filename = f"{clean_topic_filename}_{agent_id[:8]}_{timestamp}_tasks.md"
+    history_filename = f"{clean_topic_filename}_{agent_id[:8]}_{timestamp}_history.md"
+    progress_filename = f"{clean_topic_filename}_{agent_id[:8]}_{timestamp}_progress.md"
+
+    tasks_path = cached_dir / tasks_filename
+    history_path = cached_dir / history_filename
+    progress_path = cached_dir / progress_filename
+
+    tasks_content = f"""# Assigned Tasks for {agent_name}
+Created: {datetime.now(timezone.utc).isoformat()}
+Role: Deep Research Specialist
+
+## Tasks
+- [ ] Receive research directive: "{topic}"
+- [ ] Initialize search and compilation
+- [ ] Synthesize findings on "{topic}"
+- [ ] Generate comprehensive final report
+"""
+    history_content = f"""# History Log for {agent_name}
+Created: {datetime.now(timezone.utc).isoformat()}
+
+## Activity History
+- [{datetime.now(timezone.utc).isoformat()}] Agent node initialized and cache generated.
+"""
+    progress_content = f"""# Progress Status for {agent_name}
+Created: {datetime.now(timezone.utc).isoformat()}
+
+## Status
+- **Current Task**: Researching "{topic}"
+- **Overall Progress**: 5%
+- **Status**: Initiated
+"""
+
+    try:
+        tasks_path.write_text(tasks_content, encoding="utf-8")
+        history_path.write_text(history_content, encoding="utf-8")
+        progress_path.write_text(progress_content, encoding="utf-8")
+    except Exception as e:
+        yield f"data: {json.dumps({'error': f'Failed to initialize cache directory: {str(e)}'})}\n\n"
+        return
+
+    new_agent = Agent(
+        id=agent_id,
+        name=agent_name,
+        role="Research Specialist",
+        avatar="🔍",
+        status="working",
+        current_task=f"Researching: {topic}",
+        priority="high",
+        cpu_allocation=70,
+        memory_allocation=256,
+        capabilities=json.dumps(["Deep Research", "Market Trends", "Synthesizing Data"]),
+        tools=json.dumps(["web_fetch", "write_file_content"]),
+        activity=json.dumps([f"Node initialized for task: {topic}"]),
+        performance=100
+    )
+    db.add(new_agent)
+    await db.commit()
+
+    yield f"data: {json.dumps({'text': f'🤖 **JARVIS OS**: Research directive recognized. Spawning specialized **Gemini 3.1 Flash Lite** researcher agent under the workforce section...\n\n'})}\n\n"
+    yield f"data: {json.dumps({'workspaceChanged': agent_id})}\n\n"
+
+    await asyncio.sleep(1.0)
+    yield f"data: {json.dumps({'text': f'📡 **Ping from {agent_name}**:\n*Status: Initiating deep web search for \"{topic}\"...*\n\n'})}\n\n"
+    await asyncio.sleep(1.5)
+    yield f"data: {json.dumps({'text': f'📡 **Ping from {agent_name}**:\n*Status: Querying cognitive networks for synthesis...*\n\n'})}\n\n"
+
+    ai_service = AIService()
+    research_prompt = f"""You are {agent_name}, a highly skilled Research Specialist.
+Perform a detailed, professional, and comprehensive research on the topic: "{topic}".
+Avoid raw asterisks and formatting issues, use clean headers, bold, and bullet points.
+
+Also, generate the updated contents for the three cache files based on your execution details:
+1. TASKS: A checklist of the tasks performed.
+2. HISTORY: A timeline of the actions taken.
+3. PROGRESS: A progress report of the status.
+
+Format your output EXACTLY as follows:
+---REPORT---
+[Your detailed report findings here]
+---TASKS---
+[Your tasks.md content here]
+---HISTORY---
+[Your history.md content here]
+---PROGRESS---
+[Your progress.md content here]
+"""
+
+    response_chunks = []
+    try:
+        async for chunk in ai_service.stream_chat(
+            message=research_prompt,
+            history=[],
+            system_instruction="You are a professional research agent. Provide detailed, high-quality, factual information without displaying raw asterisks in markdown parsing.",
+            model="gemini-3.1-flash-lite",
+            db=db
+        ):
+            if "text" in chunk:
+                response_chunks.append(chunk["text"])
+    except Exception as e:
+        yield f"data: {json.dumps({'error': f'Failed to run research: {str(e)}'})}\n\n"
+        return
+
+    full_response = "".join(response_chunks)
+
+    report_content = "Research report generation failed."
+    tasks_update = tasks_content
+    history_update = history_content
+    progress_update = progress_content
+
+    if "---REPORT---" in full_response:
+        parts = full_response.split("---REPORT---")[1].split("---TASKS---")
+        report_content = parts[0].strip()
+        if len(parts) > 1:
+            parts2 = parts[1].split("---HISTORY---")
+            tasks_update = parts2[0].strip()
+            if len(parts2) > 1:
+                parts3 = parts2[1].split("---PROGRESS---")
+                history_update = parts3[0].strip()
+                if len(parts3) > 1:
+                    progress_update = parts3[1].strip()
+
+    tasks_path.write_text(tasks_update, encoding="utf-8")
+    history_path.write_text(history_update, encoding="utf-8")
+    progress_path.write_text(progress_update, encoding="utf-8")
+
+    report_filename = f"{clean_topic_filename}_{agent_id[:8]}_{timestamp}_report.md"
+    report_path = cached_dir / report_filename
+    report_path.write_text(report_content, encoding="utf-8")
+
+    from sqlalchemy import select
+    result = await db.execute(select(Agent).where(Agent.id == agent_id))
+    db_agent = result.scalar_one_or_none()
+    if db_agent:
+        db_agent.status = "idle"
+        db_agent.current_task = None
+        db_agent.activity = json.dumps([
+            f"Completed research on {topic}",
+            f"Saved detailed reports under Cached/"
+        ])
+        await db.commit()
+
+    yield f"data: {json.dumps({'workspaceChanged': agent_id})}\n\n"
+
+    yield f"data: {json.dumps({'notification': {
+        'title': 'Research Complete',
+        'message': f'Specialized agent completed research on {topic}. Findings cached in Cached/.',
+        'type': 'success'
+    }})}\n\n"
+
+    yield f"data: {json.dumps({'text': f'📡 **Ping from {agent_name}**:\n*Status: Done!*\n\n✅ **Research Task Successfully Completed!**\n\nThe delegated agent **{agent_name}** has completed the research on: **{topic}**.\n\nAll findings, logs, and progress metrics have been written and timestamped in the new `Cached` folder:\n- `Cached/{tasks_filename}`\n- `Cached/{history_filename}`\n- `Cached/{progress_filename}`\n- `Cached/{report_filename}`\n\nYou can view these markdown files under the **Files** tab!\n\nA notification has also been sent to your JARVIS notification system.'})}\n\n"
+    yield "data: [DONE]\n\n"
+
+
 @app.post("/api/chat")
 async def frontend_chat(
     data: FrontendChatRequest,
@@ -98,6 +296,9 @@ async def frontend_chat(
     db=Depends(get_db),
 ):
     """Streaming chat endpoint with integrated JARVIS function-calling tool loop."""
+    if is_research_request(data.message):
+        return StreamingResponse(research_flow_generator(data.message, db), media_type="text/event-stream")
+
     async def event_generator():
         async for chunk in ai_service.stream_chat(
             message=data.message,

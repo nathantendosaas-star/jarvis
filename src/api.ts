@@ -228,6 +228,6 @@ export async function updateAgent(
   return mapBackendAgent(agent);
 }
 
-export async function deleteAgent(agentId: string): Promise<void> {
-  return apiRequest<void>(`/api/agents/${agentId}`, { method: "DELETE" });
+export async function deleteAgent(agentId: string, deleteCache: boolean = false): Promise<void> {
+  return apiRequest<void>(`/api/agents/${agentId}?delete_cache=${deleteCache}`, { method: "DELETE" });
 }
