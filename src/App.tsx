@@ -1,10 +1,11 @@
 import React, { Suspense, lazy, useState, useEffect, useRef } from "react";
 import Sidebar from "./components/Sidebar";
 import TopBar from "./components/TopBar";
-import DashboardView from "./components/DashboardView";
+import HUDView from "./components/HUDView";
 import CommandPalette from "./components/CommandPalette";
 import VoiceSync from "./components/VoiceSync";
 import { fetchWorkspaceData, fetchWorkspaceFiles, fetchAgents, updateAgent as apiUpdateAgent } from "./api";
+import { audioService } from "./utils/audioService";
 
 import {
   WorkspaceView,
@@ -29,10 +30,106 @@ const AutomationView = lazy(() => import("./components/AutomationView"));
 const SettingsView = lazy(() => import("./components/SettingsView"));
 
 export default function App() {
+  const [booted, setBooted] = useState(() => {
+    return sessionStorage.getItem("jarvis-booted") === "true";
+  });
+
+  const handleBoot = () => {
+    sessionStorage.setItem("jarvis-booted", "true");
+    setBooted(true);
+    audioService.playBootSound();
+    setTimeout(() => {
+      audioService.speak("Welcome back, sir.");
+      triggerNotification("System Online", "Welcome back, sir.", "success");
+    }, 120);
+  };
+
   const [currentView, setCurrentView] = useState<WorkspaceView>("dashboard");
   const [collapsed, setCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [selectedModel, setSelectedModel] = useState("gemini-3.1-flash-lite");
+
+  // Audio & Mic Volume States
+  const [ttsEnabled, setTtsEnabledState] = useState(() => {
+    return localStorage.getItem("jarvis-tts-enabled") !== "false";
+  });
+  const [sfxEnabled, setSfxEnabledState] = useState(() => {
+    return localStorage.getItem("jarvis-sfx-enabled") !== "false";
+  });
+  const [isMicActive, setIsMicActive] = useState(false);
+  const [micVolume, setMicVolume] = useState(0);
+
+  const setTtsEnabled = (val: boolean) => {
+    setTtsEnabledState(val);
+    audioService.setTtsEnabled(val);
+  };
+
+  const setSfxEnabled = (val: boolean) => {
+    setSfxEnabledState(val);
+    audioService.setSfxEnabled(val);
+  };
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
+  const handleMicActiveChange = (active: boolean, stream?: MediaStream) => {
+    setIsMicActive(active);
+
+    if (!active) {
+      setMicVolume(0);
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      analyserRef.current = null;
+      audioService.playMicCloseSound();
+      return;
+    }
+
+    // Play active chirp
+    audioService.playMicOpenSound();
+
+    if (stream) {
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        const source = audioCtx.createMediaStreamSource(stream);
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+
+        audioCtxRef.current = audioCtx;
+        analyserRef.current = analyser;
+
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const updateVolume = () => {
+          if (!analyserRef.current) return;
+          analyserRef.current.getByteTimeDomainData(dataArray);
+
+          let sum = 0;
+          for (let i = 0; i < bufferLength; i++) {
+            const v = (dataArray[i] - 128) / 128;
+            sum += v * v;
+          }
+          const rms = Math.sqrt(sum / bufferLength);
+
+          // Map RMS to a pleasant visual pulse range: 0 to 1
+          const smoothedVolume = Math.min(1, rms * 4);
+          setMicVolume(smoothedVolume);
+
+          animationFrameRef.current = requestAnimationFrame(updateVolume);
+        };
+
+        updateVolume();
+      } catch (err) {
+        console.warn("Failed to start mic volume analyser context:", err);
+      }
+    }
+  };
+
   const [dataStatus, setDataStatus] = useState<"loading" | "ready" | "error">("loading");
 
   // UI Open / Close Triggers
@@ -222,14 +319,21 @@ export default function App() {
         {/* Dynamic workspace viewport routing */}
         <main className="flex-1 overflow-hidden flex flex-col">
           {currentView === "dashboard" && (
-            <DashboardView
+            <HUDView
               projects={projects}
               agents={agents}
               metrics={systemMetrics}
-              notifications={notifications}
-              setActiveView={setCurrentView}
-              setActiveProjectId={setActiveProjectId}
+              messages={messages}
+              setMessages={setMessages}
               triggerNotification={triggerNotification}
+              selectedModel={selectedModel}
+              onOpenVoice={toggleVoiceOrb}
+              isMicActive={isMicActive}
+              micVolume={micVolume}
+              ttsEnabled={ttsEnabled}
+              setTtsEnabled={setTtsEnabled}
+              sfxEnabled={sfxEnabled}
+              setSfxEnabled={setSfxEnabled}
             />
           )}
 
@@ -242,6 +346,7 @@ export default function App() {
                 triggerNotification={triggerNotification}
                 pendingVoicePrompt={pendingVoicePrompt}
                 clearPendingVoicePrompt={() => setPendingVoicePrompt(null)}
+                onMicActiveChange={handleMicActiveChange}
                 systemInstruction="You are JARVIS, an advanced AI Operating System. Speak confidently, professionally, yet warm. Act as the central nervous orchestrator of specialized agents."
               />
             )}
@@ -306,6 +411,10 @@ export default function App() {
                 selectedModel={selectedModel}
                 setSelectedModel={setSelectedModel}
                 triggerNotification={triggerNotification}
+                ttsEnabled={ttsEnabled}
+                setTtsEnabled={setTtsEnabled}
+                sfxEnabled={sfxEnabled}
+                setSfxEnabled={setSfxEnabled}
               />
             )}
           </Suspense>
@@ -327,7 +436,43 @@ export default function App() {
         onClose={() => setIsVoiceOpen(false)}
         onTranscriptionResult={handleVoiceTranscriptionResult}
         triggerNotification={triggerNotification}
+        onMicActiveChange={handleMicActiveChange}
       />
+
+      {/* Welcome Core Boot-Up Overlay */}
+      {!booted && (
+        <div className="fixed inset-0 bg-[#06070a] z-[9999] flex flex-col items-center justify-center p-6 text-center select-none font-mono">
+          <div className="absolute inset-0 pointer-events-none overflow-hidden">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-blue-600/[0.04] rounded-full blur-[150px]" />
+          </div>
+
+          <div className="relative flex flex-col items-center max-w-md w-full gap-8">
+            {/* Glowing Core Visual */}
+            <div className="relative w-32 h-32 flex items-center justify-center">
+              <div className="absolute inset-0 border border-slate-800 rounded-full animate-hud-spin-slow" />
+              <div className="absolute inset-2 border border-dashed border-blue-500/30 rounded-full animate-hud-spin-reverse" />
+              <div className="absolute inset-6 border-[3px] border-blue-500/20 rounded-full animate-hud-pulse" />
+              <div className="w-10 h-10 rounded-full bg-blue-500/10 border border-blue-500/50 flex items-center justify-center shadow-[0_0_20px_rgba(59,130,246,0.3)] animate-pulse">
+                <div className="w-2.5 h-2.5 bg-blue-400 rounded-full" />
+              </div>
+            </div>
+
+            {/* Typography */}
+            <div className="space-y-2">
+              <h2 className="text-xl font-display font-bold text-white tracking-[0.25em]">JARVIS OS</h2>
+              <p className="text-[10px] text-slate-500 tracking-wider uppercase">COGNITIVE NETWORK INTERLINK</p>
+            </div>
+
+            {/* Button */}
+            <button
+              onClick={handleBoot}
+              className="px-6 py-3 bg-blue-600/10 hover:bg-blue-600/20 border border-blue-500/40 hover:border-blue-500 rounded-xl text-xs font-bold text-blue-400 hover:text-white transition-all cursor-pointer shadow-lg hover:shadow-[0_0_25px_rgba(59,130,246,0.15)] uppercase tracking-widest"
+            >
+              Initialize Link
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   );

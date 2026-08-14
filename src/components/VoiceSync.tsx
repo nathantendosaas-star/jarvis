@@ -15,6 +15,7 @@ interface VoiceSyncProps {
   onClose: () => void;
   onTranscriptionResult: (text: string) => void;
   triggerNotification: (title: string, msg: string, type: any) => void;
+  onMicActiveChange?: (active: boolean, stream?: MediaStream) => void;
 }
 
 export default function VoiceSync({
@@ -22,6 +23,7 @@ export default function VoiceSync({
   onClose,
   onTranscriptionResult,
   triggerNotification,
+  onMicActiveChange,
 }: VoiceSyncProps) {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -111,6 +113,7 @@ export default function VoiceSync({
 
       mediaRecorder.start();
       setIsRecording(true);
+      onMicActiveChange?.(true, stream);
       triggerNotification("Speech Core Ready", "Speak your prompt or operation objectives...", "info");
     } catch (err) {
       console.error(err);
@@ -123,6 +126,7 @@ export default function VoiceSync({
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      onMicActiveChange?.(false);
     }
   };
 

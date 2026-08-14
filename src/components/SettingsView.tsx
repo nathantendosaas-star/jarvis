@@ -21,6 +21,10 @@ interface SettingsViewProps {
   selectedModel: string;
   setSelectedModel: (model: string) => void;
   triggerNotification: (title: string, msg: string, type: any) => void;
+  ttsEnabled?: boolean;
+  setTtsEnabled?: (val: boolean) => void;
+  sfxEnabled?: boolean;
+  setSfxEnabled?: (val: boolean) => void;
 }
 
 export default function SettingsView({
@@ -29,6 +33,10 @@ export default function SettingsView({
   selectedModel,
   setSelectedModel,
   triggerNotification,
+  ttsEnabled = true,
+  setTtsEnabled,
+  sfxEnabled = true,
+  setSfxEnabled,
 }: SettingsViewProps) {
   const [micPerm, setMicPerm] = useState(true);
   const [notifPerm, setNotifPerm] = useState(true);
@@ -196,6 +204,40 @@ export default function SettingsView({
                 >
                   <div className={`w-4.5 h-4.5 bg-white rounded-full transition-transform ${
                     notifPerm ? "translate-x-4.5" : "translate-x-0"
+                  }`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-slate-800/40 pt-3">
+                <span className="text-slate-400">Talk-Back Engine (TTS)</span>
+                <button
+                  onClick={() => {
+                    setTtsEnabled?.(!ttsEnabled);
+                    triggerNotification("Audio Preference", `Talk-Back Speech: ${!ttsEnabled ? "ENABLED" : "MUTED"}`, "info");
+                  }}
+                  className={`w-10 h-5.5 rounded-full p-0.5 transition-colors cursor-pointer ${
+                    ttsEnabled ? "bg-blue-600" : "bg-slate-800"
+                  }`}
+                >
+                  <div className={`w-4.5 h-4.5 bg-white rounded-full transition-transform ${
+                    ttsEnabled ? "translate-x-4.5" : "translate-x-0"
+                  }`} />
+                </button>
+              </div>
+
+              <div className="flex items-center justify-between">
+                <span className="text-slate-400">Synthesizer Sound Effects (SFX)</span>
+                <button
+                  onClick={() => {
+                    setSfxEnabled?.(!sfxEnabled);
+                    triggerNotification("Audio Preference", `Sci-Fi Sound Effects: ${!sfxEnabled ? "ENABLED" : "SILENT"}`, "info");
+                  }}
+                  className={`w-10 h-5.5 rounded-full p-0.5 transition-colors cursor-pointer ${
+                    sfxEnabled ? "bg-blue-600" : "bg-slate-800"
+                  }`}
+                >
+                  <div className={`w-4.5 h-4.5 bg-white rounded-full transition-transform ${
+                    sfxEnabled ? "translate-x-4.5" : "translate-x-0"
                   }`} />
                 </button>
               </div>

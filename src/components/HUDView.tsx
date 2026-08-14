@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { Project, Agent, SystemMetrics, ChatMessage } from "../types";
 import D3Timeline from "./D3Timeline";
+import { audioService } from "../utils/audioService";
 
 interface HUDViewProps {
   projects: Project[];
@@ -26,6 +27,12 @@ interface HUDViewProps {
   triggerNotification: (title: string, msg: string, type: any) => void;
   selectedModel: string;
   onOpenVoice: () => void;
+  isMicActive?: boolean;
+  micVolume?: number;
+  ttsEnabled?: boolean;
+  setTtsEnabled?: (val: boolean) => void;
+  sfxEnabled?: boolean;
+  setSfxEnabled?: (val: boolean) => void;
 }
 
 export default function HUDView({
@@ -36,7 +43,13 @@ export default function HUDView({
   setMessages,
   triggerNotification,
   selectedModel,
-  onOpenVoice
+  onOpenVoice,
+  isMicActive = false,
+  micVolume = 0,
+  ttsEnabled = true,
+  setTtsEnabled,
+  sfxEnabled = true,
+  setSfxEnabled
 }: HUDViewProps) {
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
@@ -63,6 +76,9 @@ export default function HUDView({
     setMessages(prev => [...prev, newUserMsg]);
     setIsProcessing(true);
 
+    // Cancel any ongoing speech
+    audioService.cancelSpeech();
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -80,6 +96,7 @@ export default function HUDView({
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let fullResponse = "";
+      let lastSpokenIndex = 0;
       
       const newBotMsgId = "msg-" + Date.now();
       setMessages(prev => [
@@ -111,12 +128,37 @@ export default function HUDView({
               if (data.text) {
                 fullResponse += data.text;
                 setMessages(prev => prev.map(m => m.id === newBotMsgId ? { ...m, content: fullResponse } : m));
+
+                // Play subtle sci-fi typing click
+                audioService.playTypingSound();
+
+                // Speech synthesis sentence-by-sentence parsing
+                const newText = fullResponse.slice(lastSpokenIndex);
+                const sentenceEndRegex = /[.!?]+(\s+|$)/g;
+                let match;
+                let tempIndex = 0;
+
+                while ((match = sentenceEndRegex.exec(newText)) !== null) {
+                  const sentenceEnd = match.index + match[0].length;
+                  const sentence = newText.slice(tempIndex, sentenceEnd).trim();
+                  if (sentence) {
+                    audioService.speak(sentence);
+                  }
+                  tempIndex = sentenceEnd;
+                }
+                lastSpokenIndex += tempIndex;
               }
             } catch (err) {
               console.error("Failed to parse SSE data", err);
             }
           }
         }
+      }
+
+      // Speak any remaining response that wasn't punctuated
+      const remainingText = fullResponse.slice(lastSpokenIndex).trim();
+      if (remainingText) {
+        audioService.speak(remainingText);
       }
     } catch (err) {
       triggerNotification("Communication Failure", "Failed to reach cognitive core.", "error");
@@ -145,30 +187,49 @@ export default function HUDView({
         {/* Left Column: Monitoring */}
         <div className="hidden md:flex flex-col col-span-3 gap-4">
           
-          {/* Card 1: Customer / User metrics */}
-          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex flex-col gap-4 shadow-xl">
+          {/* Card 1: Audio Cognitive Interlink Toggles */}
+          <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex flex-col gap-4 shadow-xl font-mono">
             <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider">
-              <span>Customer</span>
-              <span className="text-slate-500">...</span>
+              <span>COGNITIVE_AUDIO_LINK</span>
+              <Activity className="w-4 h-4 text-hud-teal animate-pulse" />
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-hud-green flex items-center gap-1 text-[10px]"><div className="w-0 h-0 border-l-[4px] border-r-[4px] border-b-[6px] border-transparent border-b-hud-green" /></div>
-                <div className="text-2xl font-display font-bold text-white">2.4%</div>
-                <div className="text-[10px] text-slate-500">Web Surfing</div>
+
+            <div className="space-y-4 pt-2">
+              {/* Talk-Back Engine Switch */}
+              <div className="flex items-center justify-between text-[11px]">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-slate-300 font-bold uppercase">TALK_BACK_TTS</span>
+                  <span className="text-[9px] text-slate-500">Speech Output Engine</span>
+                </div>
+                <button
+                  onClick={() => setTtsEnabled?.(!ttsEnabled)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                    ttsEnabled
+                      ? "bg-hud-teal/10 border-hud-teal/30 text-hud-teal shadow-[0_0_10px_rgba(45,212,191,0.15)]"
+                      : "bg-transparent border-white/5 text-slate-500"
+                  }`}
+                >
+                  {ttsEnabled ? "SECURE_ON" : "MUTED"}
+                </button>
               </div>
-              <div>
-                <div className="text-hud-orange flex items-center gap-1 text-[10px]"><div className="w-0 h-0 border-l-[4px] border-r-[4px] border-t-[6px] border-transparent border-t-hud-orange" /></div>
-                <div className="text-2xl font-display font-bold text-white">1.1%</div>
-                <div className="text-[10px] text-slate-500">Radio Station</div>
+
+              {/* Synth SFX Switch */}
+              <div className="flex items-center justify-between text-[11px] pt-2 border-t border-white/5">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-slate-300 font-bold uppercase">SYNTH_SFX</span>
+                  <span className="text-[9px] text-slate-500">Sci-Fi Audio Feedback</span>
+                </div>
+                <button
+                  onClick={() => setSfxEnabled?.(!sfxEnabled)}
+                  className={`px-3 py-1.5 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                    sfxEnabled
+                      ? "bg-hud-green/10 border-hud-green/30 text-hud-green shadow-[0_0_10px_rgba(163,230,53,0.15)]"
+                      : "bg-transparent border-white/5 text-slate-500"
+                  }`}
+                >
+                  {sfxEnabled ? "ONLINE" : "SILENT"}
+                </button>
               </div>
-            </div>
-            {/* Fake SVG Graph */}
-            <div className="h-12 w-full mt-2 relative">
-              <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 30">
-                <path d="M0,15 Q10,5 20,15 T40,20 T60,10 T80,25 T100,15" fill="none" stroke="var(--color-hud-green)" strokeWidth="1.5" />
-                <path d="M0,25 Q15,10 30,20 T50,25 T70,15 T90,20 T100,5" fill="none" stroke="var(--color-hud-orange)" strokeWidth="1.5" />
-              </svg>
             </div>
           </div>
 
@@ -223,11 +284,29 @@ export default function HUDView({
         <div className="col-span-1 md:col-span-6 flex flex-col relative h-full">
           
           {/* Futuristic HUD Background Element */}
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20 select-none overflow-hidden">
-            <div className="relative w-96 h-96 flex items-center justify-center">
-              <div className="absolute inset-0 border-2 border-slate-600 rounded-full animate-hud-spin" />
-              <div className="absolute inset-4 border border-dashed border-slate-500 rounded-full animate-hud-spin-reverse" />
-              <div className="absolute inset-12 border-[4px] border-hud-teal/30 rounded-full animate-hud-pulse" />
+          <div
+            className="absolute inset-0 flex items-center justify-center pointer-events-none select-none overflow-hidden transition-opacity duration-300"
+            style={{ opacity: isMicActive ? 0.35 : 0.2 }}
+          >
+            <div
+              className="relative w-96 h-96 flex items-center justify-center transition-transform duration-75"
+              style={{ transform: isMicActive ? `scale(${1 + micVolume * 0.4})` : 'scale(1)' }}
+            >
+              <div
+                className="absolute inset-0 border-2 rounded-full animate-hud-spin transition-colors duration-150"
+                style={{ borderColor: isMicActive ? 'var(--color-hud-teal)' : '#475569' }}
+              />
+              <div
+                className="absolute inset-4 border border-dashed rounded-full animate-hud-spin-reverse transition-colors duration-150"
+                style={{ borderColor: isMicActive ? 'var(--color-hud-green)' : '#64748b' }}
+              />
+              <div
+                className="absolute inset-12 border-[4px] rounded-full animate-hud-pulse transition-all duration-75"
+                style={{
+                  borderColor: isMicActive ? 'var(--color-hud-green)' : 'rgba(45,212,191,0.3)',
+                  borderWidth: isMicActive ? `${4 + micVolume * 8}px` : '4px'
+                }}
+              />
               
               {/* Center crosshairs */}
               <div className="absolute w-[120%] h-[1px] bg-slate-700/50" />
@@ -238,10 +317,21 @@ export default function HUDView({
           {/* Chat Messages Area */}
           <div className="flex-1 overflow-y-auto p-4 z-10 flex flex-col space-y-6">
             <div className="text-center mt-12 mb-8 animate-fade-in">
-              <div className="w-16 h-16 mx-auto bg-black border-2 border-hud-teal rounded-full flex items-center justify-center mb-4 shadow-[0_0_30px_rgba(45,212,191,0.2)] animate-hud-pulse">
-                <Bot className="w-8 h-8 text-hud-teal" />
+              <div
+                className={`w-16 h-16 mx-auto bg-black border-2 rounded-full flex items-center justify-center mb-4 transition-all duration-75 ${
+                  isMicActive ? "" : "animate-hud-pulse border-hud-teal shadow-[0_0_30px_rgba(45,212,191,0.2)]"
+                }`}
+                style={isMicActive ? {
+                  transform: `scale(${1 + micVolume * 0.5})`,
+                  borderColor: 'var(--color-hud-green)',
+                  boxShadow: `0 0 ${30 + micVolume * 60}px rgba(163, 230, 53, ${0.3 + micVolume * 0.7})`
+                } : undefined}
+              >
+                <Bot className={`w-8 h-8 transition-colors duration-150 ${isMicActive ? 'text-hud-green' : 'text-hud-teal'}`} />
               </div>
-              <h1 className="text-2xl font-display font-bold text-white tracking-widest">SYSTEM NEXUS</h1>
+              <h1 className="text-2xl font-display font-bold text-white tracking-widest">
+                {isMicActive ? "VOCAL_SYNC_ACTIVE" : "SYSTEM NEXUS"}
+              </h1>
               <p className="text-xs text-slate-400 font-mono mt-2 uppercase tracking-wider">Awaiting plain english instruction</p>
             </div>
 

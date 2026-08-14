@@ -20,6 +20,7 @@ import {
   Wrench
 } from "lucide-react";
 import { ChatMessage, SystemNotification } from "../types";
+import { audioService } from "../utils/audioService";
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -29,6 +30,7 @@ interface ChatViewProps {
   systemInstruction?: string;
   pendingVoicePrompt?: string | null;
   clearPendingVoicePrompt?: () => void;
+  onMicActiveChange?: (active: boolean, stream?: MediaStream) => void;
 }
 
 export default function ChatView({
@@ -39,6 +41,7 @@ export default function ChatView({
   systemInstruction,
   pendingVoicePrompt,
   clearPendingVoicePrompt,
+  onMicActiveChange,
 }: ChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [useSearch, setUseSearch] = useState(false);
@@ -133,6 +136,7 @@ export default function ChatView({
 
       mediaRecorder.start();
       setIsRecording(true);
+      onMicActiveChange?.(true, stream);
       triggerNotification("Vocal Sync Mode", "Listening to microphone input...", "info");
     } catch (err: any) {
       console.error("Microphone access blocked:", err);
@@ -144,6 +148,7 @@ export default function ChatView({
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      onMicActiveChange?.(false);
     }
   };
 
@@ -164,6 +169,9 @@ export default function ChatView({
 
   const sendMessage = async (textToSend: string) => {
     if (!textToSend.trim() || isStreaming) return;
+
+    // Cancel any previous speech
+    audioService.cancelSpeech();
 
     const userMessage: ChatMessage = {
       id: "msg-" + Date.now(),
@@ -216,6 +224,7 @@ export default function ChatView({
       if (!reader) throw new Error("Could not initialize SSE decoder");
 
       let accumulatedText = "";
+      let lastSpokenIndex = 0;
       let lastCitations: any[] = [];
 
       while (true) {
@@ -271,6 +280,27 @@ export default function ChatView({
                   if (dataObj.searchChunks && dataObj.searchChunks.length > 0) {
                     lastCitations = dataObj.searchChunks;
                   }
+
+                  if (dataObj.text) {
+                    // Play subtle sci-fi typing click
+                    audioService.playTypingSound();
+
+                    // Speech synthesis sentence-by-sentence parsing
+                    const newText = accumulatedText.slice(lastSpokenIndex);
+                    const sentenceEndRegex = /[.!?]+(\s+|$)/g;
+                    let match;
+                    let tempIndex = 0;
+
+                    while ((match = sentenceEndRegex.exec(newText)) !== null) {
+                      const sentenceEnd = match.index + match[0].length;
+                      const sentence = newText.slice(tempIndex, sentenceEnd).trim();
+                      if (sentence) {
+                        audioService.speak(sentence);
+                      }
+                      tempIndex = sentenceEnd;
+                    }
+                    lastSpokenIndex += tempIndex;
+                  }
                 }
 
                 // Update the latest assistant message
@@ -297,6 +327,12 @@ export default function ChatView({
               }
           }
         }
+      }
+
+      // Speak any remaining response that wasn't punctuated
+      const remainingText = accumulatedText.slice(lastSpokenIndex).trim();
+      if (remainingText) {
+        audioService.speak(remainingText);
       }
     } catch (error: any) {
       console.error("Streaming error:", error);
