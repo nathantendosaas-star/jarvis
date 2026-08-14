@@ -4,7 +4,7 @@ import TopBar from "./components/TopBar";
 import HUDView from "./components/HUDView";
 import CommandPalette from "./components/CommandPalette";
 import VoiceSync from "./components/VoiceSync";
-import { fetchWorkspaceData, fetchWorkspaceFiles, fetchAgents, updateAgent as apiUpdateAgent } from "./api";
+import { fetchWorkspaceData, fetchWorkspaceFiles, fetchAgents, updateAgent as apiUpdateAgent, deleteAgent as apiDeleteAgent, createAgent as apiCreateAgent } from "./api";
 import { audioService } from "./utils/audioService";
 
 import {
