@@ -1,0 +1,3 @@
+## 2026-08-16 - D3 Timeline Re-render & SVG Re-creation Optimization
+**Learning:** Including local component state (like hover state `hoveredMilestone`) in the `useEffect` dependency array for D3 SVG rendering causes full SVG element teardown (`svg.selectAll("*").remove()`) and DOM re-creation on every mouse enter/leave event. Additionally, array `.map()` operations and `Date` calculations inside the rendering effect trigger unnecessary allocations on every effect run.
+**Action:** Extract static data parsing and time domain boundary calculations outside component render cycles. Keep hover tooltips rendered via React DOM state overlays and remove hover state dependencies from D3 imperative DOM rendering effects.

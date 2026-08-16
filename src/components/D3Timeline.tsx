@@ -69,6 +69,11 @@ const INITIAL_MILESTONES: Milestone[] = [
   }
 ];
 
+// Pre-compute static date boundaries once outside render loop to avoid redundant math and Date object allocations
+const MILESTONE_DATES = INITIAL_MILESTONES.map((m) => m.date.getTime());
+const MIN_MILESTONE_DATE = new Date(Math.min(...MILESTONE_DATES) - 24 * 60 * 60 * 1000 * 2); // 2 days padding
+const MAX_MILESTONE_DATE = new Date(Math.max(...MILESTONE_DATES) + 24 * 60 * 60 * 1000 * 2); // 2 days padding
+
 export default function D3Timeline() {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -105,13 +110,9 @@ export default function D3Timeline() {
     const width = dimensions.width - margin.left - margin.right;
     const height = dimensions.height - margin.top - margin.bottom;
 
-    // Time scale
-    const dates = INITIAL_MILESTONES.map((m) => m.date.getTime());
-    const minDate = new Date(Math.min(...dates) - 24 * 60 * 60 * 1000 * 2); // 2 days padding
-    const maxDate = new Date(Math.max(...dates) + 24 * 60 * 60 * 1000 * 2); // 2 days padding
-
+    // Use pre-calculated static date domain
     const xScale = d3.scaleTime()
-      .domain([minDate, maxDate])
+      .domain([MIN_MILESTONE_DATE, MAX_MILESTONE_DATE])
       .range([0, width]);
 
     // Center vertical line for the main axis timeline
@@ -230,7 +231,7 @@ export default function D3Timeline() {
         .text(m.title.length > 10 ? m.title.substring(0, 8) + ".." : m.title);
     });
 
-  }, [dimensions, hoveredMilestone]);
+  }, [dimensions]); // Exclude hoveredMilestone to prevent full D3 SVG tear-down & re-render on hover
 
   return (
     <div ref={containerRef} className="relative w-full h-full flex flex-col justify-between">
