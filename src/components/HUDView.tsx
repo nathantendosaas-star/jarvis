@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Mic,
   Activity,
@@ -54,6 +54,16 @@ export default function HUDView({
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Optimization: Memoize task volatility bar chart data so random values aren't recalculated
+  // on every high-frequency render frame (e.g. 60fps audio/mic volume streaming).
+  const taskVolatilityBars = useMemo(() => {
+    return Array.from({ length: 8 }, (_, i) => ({
+      h1: Math.floor(Math.random() * 60) + 20,
+      h2: Math.floor(Math.random() * 40) + 10,
+      isGreen: i % 2 === 0
+    }));
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -272,7 +282,7 @@ export default function HUDView({
                     <div className="text-[11px] text-white font-bold truncate">{a.name}</div>
                     <div className="text-[9px] text-slate-500 truncate">{a.status === "working" ? a.currentTask : a.role}</div>
                   </div>
-                  <div className={`w-1.5 h-1.5 rounded-full \${a.status === "working" ? "bg-hud-green animate-pulse" : a.status === "paused" ? "bg-hud-orange" : "bg-slate-600"}`} />
+                  <div className={`w-1.5 h-1.5 rounded-full ${a.status === "working" ? "bg-hud-green animate-pulse" : a.status === "paused" ? "bg-hud-orange" : "bg-slate-600"}`} />
                 </div>
               ))}
             </div>
@@ -336,16 +346,16 @@ export default function HUDView({
             </div>
 
             {messages.map((msg, i) => (
-              <div key={msg.id} className={`flex gap-4 max-w-[85%] \${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}>
+              <div key={msg.id} className={`flex gap-4 max-w-[85%] ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}>
                 <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center border border-white/10 bg-hud-card">
                   {msg.role === 'user' ? <User className="w-4 h-4 text-hud-green" /> : <Bot className="w-4 h-4 text-hud-teal" />}
                 </div>
-                <div className={`flex flex-col gap-1 \${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                   <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase">
                     <span>{msg.role === 'user' ? 'OPERATOR' : 'JARVIS'}</span>
                     <span>{msg.timestamp}</span>
                   </div>
-                  <div className={`p-4 text-sm leading-relaxed backdrop-blur-md border \${
+                  <div className={`p-4 text-sm leading-relaxed backdrop-blur-md border ${
                     msg.role === 'user' 
                       ? 'bg-hud-green/10 border-hud-green/20 text-hud-green rounded-2xl rounded-tr-sm' 
                       : 'bg-hud-card/80 border-white/10 text-slate-200 rounded-2xl rounded-tl-sm shadow-xl font-mono'
@@ -416,23 +426,17 @@ export default function HUDView({
             </div>
             
             <div className="flex-1 flex items-end justify-between px-2 gap-2">
-              {[...Array(8)].map((_, i) => {
-                const h1 = Math.floor(Math.random() * 60) + 20;
-                const h2 = Math.floor(Math.random() * 40) + 10;
-                const isGreen = i % 2 === 0;
-                
-                return (
-                  <div key={i} className="relative flex flex-col items-center w-6 gap-1 group">
-                    <div className={`w-full rounded-full transition-all duration-500 \${isGreen ? 'bg-hud-green/20 group-hover:bg-hud-green' : 'bg-hud-orange/20 group-hover:bg-hud-orange'}`} style={{ height: `${h1}%` }}>
-                       <div className="w-full h-full flex items-end pb-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                         <span className="text-[9px] font-bold text-black">{h1}</span>
-                       </div>
-                    </div>
-                    <div className={`w-2 h-2 rounded-full \${isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} />
-                    <div className={`w-full rounded-full transition-all duration-500 \${isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} style={{ height: `${h2}%` }} />
+              {taskVolatilityBars.map((bar, i) => (
+                <div key={i} className="relative flex flex-col items-center w-6 gap-1 group">
+                  <div className={`w-full rounded-full transition-all duration-500 ${bar.isGreen ? 'bg-hud-green/20 group-hover:bg-hud-green' : 'bg-hud-orange/20 group-hover:bg-hud-orange'}`} style={{ height: `${bar.h1}%` }}>
+                     <div className="w-full h-full flex items-end pb-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                       <span className="text-[9px] font-bold text-black">{bar.h1}</span>
+                     </div>
                   </div>
-                );
-              })}
+                  <div className={`w-2 h-2 rounded-full ${bar.isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} />
+                  <div className={`w-full rounded-full transition-all duration-500 ${bar.isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} style={{ height: `${bar.h2}%` }} />
+                </div>
+              ))}
             </div>
             
             <div className="mt-4 pt-4 border-t border-white/5 flex justify-between text-[10px] uppercase font-mono text-slate-500">
