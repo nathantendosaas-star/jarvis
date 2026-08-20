@@ -230,6 +230,8 @@ export default function D3Timeline() {
         .text(m.title.length > 10 ? m.title.substring(0, 8) + ".." : m.title);
     });
 
+  // Performance Optimization: Exclude `hoveredMilestone` from dependencies so hovering over timeline
+  // nodes doesn't tear down and rebuild the entire D3 SVG DOM tree on every mouseenter/mouseleave event.
   // OPTIMIZATION: Omit `hoveredMilestone` from dependencies to prevent full D3 SVG DOM teardown
   // and re-creation (via svg.selectAll("*").remove()) on every hover event. Hover state only affects
   // the React JSX overlay tooltip above the canvas.
