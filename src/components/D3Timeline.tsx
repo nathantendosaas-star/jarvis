@@ -232,6 +232,9 @@ export default function D3Timeline() {
 
   // Optimization: Omit `hoveredMilestone` from dependency array so hover state changes
   // do not tear down and rebuild the entire D3 SVG DOM tree unnecessarily.
+  // OPTIMIZATION: Omit `hoveredMilestone` from dependencies to prevent full D3 SVG DOM teardown
+  // and re-creation (via svg.selectAll("*").remove()) on every hover event. Hover state only affects
+  // the React JSX overlay tooltip above the canvas.
   }, [dimensions]);
 
   return (

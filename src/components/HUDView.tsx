@@ -59,6 +59,9 @@ export default function HUDView({
   // on every high-frequency render frame (e.g. 60fps audio/mic volume streaming).
   const taskVolatilityBars = useMemo(() => {
     return Array.from({ length: 8 }, (_, i) => ({
+  // Memoize static volatility bar dimensions so random values aren't recalculated on every render
+  const volatilityBars = useMemo(() => {
+    return Array.from({ length: 8 }).map((_, i) => ({
       h1: Math.floor(Math.random() * 60) + 20,
       h2: Math.floor(Math.random() * 40) + 10,
       isGreen: i % 2 === 0
@@ -427,6 +430,7 @@ export default function HUDView({
             
             <div className="flex-1 flex items-end justify-between px-2 gap-2">
               {taskVolatilityBars.map((bar, i) => (
+              {volatilityBars.map((bar, i) => (
                 <div key={i} className="relative flex flex-col items-center w-6 gap-1 group">
                   <div className={`w-full rounded-full transition-all duration-500 ${bar.isGreen ? 'bg-hud-green/20 group-hover:bg-hud-green' : 'bg-hud-orange/20 group-hover:bg-hud-orange'}`} style={{ height: `${bar.h1}%` }}>
                      <div className="w-full h-full flex items-end pb-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
