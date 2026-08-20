@@ -55,9 +55,10 @@ export default function HUDView({
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Memoize static volatility bar dimensions so random values aren't recalculated on every render
+  // Memoize task volatility bar height calculations.
+  // Previously, recalculating random values on every render pass caused layout shifts and recalculations.
   const volatilityBars = useMemo(() => {
-    return Array.from({ length: 8 }).map((_, i) => ({
+    return Array.from({ length: 8 }, (_, i) => ({
       h1: Math.floor(Math.random() * 60) + 20,
       h2: Math.floor(Math.random() * 40) + 10,
       isGreen: i % 2 === 0
@@ -281,7 +282,7 @@ export default function HUDView({
                     <div className="text-[11px] text-white font-bold truncate">{a.name}</div>
                     <div className="text-[9px] text-slate-500 truncate">{a.status === "working" ? a.currentTask : a.role}</div>
                   </div>
-                  <div className={`w-1.5 h-1.5 rounded-full \${a.status === "working" ? "bg-hud-green animate-pulse" : a.status === "paused" ? "bg-hud-orange" : "bg-slate-600"}`} />
+                  <div className={`w-1.5 h-1.5 rounded-full ${a.status === "working" ? "bg-hud-green animate-pulse" : a.status === "paused" ? "bg-hud-orange" : "bg-slate-600"}`} />
                 </div>
               ))}
             </div>
@@ -345,16 +346,16 @@ export default function HUDView({
             </div>
 
             {messages.map((msg, i) => (
-              <div key={msg.id} className={`flex gap-4 max-w-[85%] \${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}>
+              <div key={msg.id} className={`flex gap-4 max-w-[85%] ${msg.role === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}>
                 <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center border border-white/10 bg-hud-card">
                   {msg.role === 'user' ? <User className="w-4 h-4 text-hud-green" /> : <Bot className="w-4 h-4 text-hud-teal" />}
                 </div>
-                <div className={`flex flex-col gap-1 \${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`flex flex-col gap-1 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                   <div className="flex items-center gap-2 text-[10px] font-mono text-slate-500 uppercase">
                     <span>{msg.role === 'user' ? 'OPERATOR' : 'JARVIS'}</span>
                     <span>{msg.timestamp}</span>
                   </div>
-                  <div className={`p-4 text-sm leading-relaxed backdrop-blur-md border \${
+                  <div className={`p-4 text-sm leading-relaxed backdrop-blur-md border ${
                     msg.role === 'user' 
                       ? 'bg-hud-green/10 border-hud-green/20 text-hud-green rounded-2xl rounded-tr-sm' 
                       : 'bg-hud-card/80 border-white/10 text-slate-200 rounded-2xl rounded-tl-sm shadow-xl font-mono'
@@ -405,7 +406,7 @@ export default function HUDView({
         {/* Right Column: Projects & Status */}
         <div className="hidden lg:flex flex-col col-span-3 gap-4">
           
-          {/* Card 4: Projects Timeline (Image 1 style) */}
+          {/* Card 4: Projects Timeline */}
           <div className="bg-hud-card rounded-3xl p-5 border border-white/5 flex-1 shadow-xl flex flex-col">
             <div className="flex justify-between items-center text-xs font-bold text-white uppercase tracking-wider mb-4">
               <span>Upcoming Milestones</span>
