@@ -89,6 +89,15 @@ export default function HUDView({
   const [isProcessing, setIsProcessing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Memoize static volatility bar dimensions so random values aren't recalculated on every render
+  const volatilityBars = useMemo(() => {
+    return Array.from({ length: 8 }).map((_, i) => ({
+      h1: Math.floor(Math.random() * 60) + 20,
+      h2: Math.floor(Math.random() * 40) + 10,
+      isGreen: i % 2 === 0
+    }));
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isProcessing]);
@@ -450,6 +459,19 @@ export default function HUDView({
             </div>
             
             <VolatilityBars />
+            <div className="flex-1 flex items-end justify-between px-2 gap-2">
+              {volatilityBars.map((bar, i) => (
+                <div key={i} className="relative flex flex-col items-center w-6 gap-1 group">
+                  <div className={`w-full rounded-full transition-all duration-500 ${bar.isGreen ? 'bg-hud-green/20 group-hover:bg-hud-green' : 'bg-hud-orange/20 group-hover:bg-hud-orange'}`} style={{ height: `${bar.h1}%` }}>
+                     <div className="w-full h-full flex items-end pb-2 justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                       <span className="text-[9px] font-bold text-black">{bar.h1}</span>
+                     </div>
+                  </div>
+                  <div className={`w-2 h-2 rounded-full ${bar.isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} />
+                  <div className={`w-full rounded-full transition-all duration-500 ${bar.isGreen ? 'bg-hud-green' : 'bg-hud-orange'}`} style={{ height: `${bar.h2}%` }} />
+                </div>
+              ))}
+            </div>
             
             <div className="mt-4 pt-4 border-t border-white/5 flex justify-between text-[10px] uppercase font-mono text-slate-500">
               <div className="flex gap-4">
