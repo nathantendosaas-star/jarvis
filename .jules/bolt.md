@@ -1,5 +1,5 @@
-## 2026-08-18 - Avoid Removing React State Dependencies from D3 Rendering Effects
+## 2026-08-17 - Avoid D3 SVG teardown on hover state updates
 
-**Learning:** Removing React state variables like `hoveredMilestone` from `useEffect` dependency arrays when rendering D3 components is an anti-pattern that triggers stale closure warnings and fails code review checks even if state setter functions inside event listeners appear to work out-of-band. D3 rendering logic and React hover/tooltip state management should either be cleanly decoupled or handled via direct DOM event listeners if DOM rebuilding is an issue.
+**Learning:** Including temporary UI state (such as `hoveredNode` or `hoveredMilestone`) in a `useEffect` dependency array that manages D3 SVG DOM construction causes D3 to completely tear down (`svg.selectAll("*").remove()`) and re-render the entire SVG DOM tree on every hover event (`mouseenter` and `mouseleave`). Since hover tooltips are rendered via React JSX overlay on top of the SVG canvas, the D3 canvas effect only needs to depend on layout dimensions and underlying data models.
 
-**Action:** Avoid removing hooks dependency array elements to prevent renders; instead refactor the component to separate DOM creation from state updates.
+**Action:** Ensure D3 simulation/rendering effects in React components only depend on structural properties like `dimensions` and `data`. Manage hover and tooltip overlays in React state without adding hover state variables to the D3 rendering `useEffect` dependencies.
