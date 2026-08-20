@@ -230,7 +230,10 @@ export default function D3Timeline() {
         .text(m.title.length > 10 ? m.title.substring(0, 8) + ".." : m.title);
     });
 
-  }, [dimensions, hoveredMilestone]);
+  // OPTIMIZATION: Omit `hoveredMilestone` from dependencies to prevent full D3 SVG DOM teardown
+  // and re-creation (via svg.selectAll("*").remove()) on every hover event. Hover state only affects
+  // the React JSX overlay tooltip above the canvas.
+  }, [dimensions]);
 
   return (
     <div ref={containerRef} className="relative w-full h-full flex flex-col justify-between">
