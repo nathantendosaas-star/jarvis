@@ -1,6 +1,9 @@
 """REST API router for the Agent workforce — CRUD endpoints for the frontend and AI tool-calls."""
 
-from typing import List
+import asyncio
+import os
+import sys
+from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..dependencies import get_db
@@ -48,3 +51,18 @@ async def delete_agent(agent_id: str, delete_cache: bool = False, db: AsyncSessi
     if not success:
         raise HTTPException(status_code=404, detail="Agent not found")
     return None
+
+
+@router.post("/review-staged", response_model=Dict[str, Any])
+async def review_staged_offline_changes():
+    """Trigger cloud model static review and merge of offline staged files asynchronously."""
+    try:
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+        if root_dir not in sys.path:
+            sys.path.insert(0, root_dir)
+
+        import cloud_review
+        # Run synchronous cloud review network call in a thread pool to avoid blocking event loop
+        return await asyncio.to_thread(cloud_review.approve_and_merge_staged_changes)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to review staged changes: {str(e)}")

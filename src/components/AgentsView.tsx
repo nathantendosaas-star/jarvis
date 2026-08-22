@@ -1,27 +1,18 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Cpu,
   Database,
   Play,
   Pause,
-  RotateCw,
-  CheckCircle2,
-  TrendingUp,
   Sliders,
   Sparkles,
   RefreshCw,
   Activity,
   MoreVertical,
-  Trash2
+  Trash2,
+  Zap,
+  Clock
 } from "lucide-react";
-import {
-  AreaChart,
-  Area,
-  ResponsiveContainer,
-  XAxis,
-  YAxis,
-  Tooltip
-} from "recharts";
 import { Agent } from "../types";
 
 const AVAILABLE_TOOLS = [
@@ -60,26 +51,6 @@ interface AgentsViewProps {
   triggerNotification: (title: string, msg: string, type: any) => void;
 }
 
-// Generate stable mock 24h data based on current usage
-const MOCK_DELTAS: Record<string, number[]> = {
-  "a-ceo": Array.from({ length: 13 }).map(() => Math.random() * 20 - 10),
-  "a-dev": Array.from({ length: 13 }).map(() => Math.random() * 20 - 10),
-  "a-res": Array.from({ length: 13 }).map(() => Math.random() * 20 - 10),
-  "a-mkt": Array.from({ length: 13 }).map(() => Math.random() * 20 - 10),
-};
-
-const getTrendData = (id: string, baseCpu: number, baseMem: number) => {
-  const deltas = MOCK_DELTAS[id] || MOCK_DELTAS["a-ceo"];
-  return deltas.map((variance, idx) => {
-    const time = idx === 12 ? "Now" : `-${(12 - idx) * 2}h`;
-    return {
-      time,
-      cpu: Math.max(0, Math.min(100, Math.round(baseCpu + variance))),
-      memory: Math.max(0, Math.min(512, Math.round(baseMem + variance * 2))),
-    };
-  });
-};
-
 export default function AgentsView({
   agents,
   setAgents,
@@ -92,7 +63,6 @@ export default function AgentsView({
   const [deletingAgent, setDeletingAgent] = useState<Agent | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Form states
   const [newName, setNewName] = useState("");
   const [newRole, setNewRole] = useState("");
   const [newAvatar, setNewAvatar] = useState("🤖");
@@ -106,7 +76,6 @@ export default function AgentsView({
   }, []);
 
   const handleSetPriority = (id: string, priority: "high" | "medium" | "low") => {
-    // Optimistic local update
     setAgents(prev =>
       prev.map(a => {
         if (a.id === id) {
@@ -120,7 +89,6 @@ export default function AgentsView({
         return a;
       })
     );
-    // Persist to backend
     onUpdateAgent(id, { priority });
   };
   
@@ -130,7 +98,6 @@ export default function AgentsView({
         if (a.id === id) {
           const nextStatus = a.status === "working" || a.status === "idle" ? "paused" : "idle";
           triggerNotification("Agent Sync Update", `${a.name} status updated to: ${nextStatus}.`, "info");
-          // Persist to backend
           onUpdateAgent(id, {
             status: nextStatus,
             cpu_allocation: nextStatus === "paused" ? 0 : a.usage.cpu,
@@ -163,7 +130,6 @@ export default function AgentsView({
         return a;
       })
     );
-    // Persist to backend
     onUpdateAgent(id, { status: "working", cpu_allocation: restartedCpu, memory_allocation: restartedMem });
     setTimeout(() => {
       triggerNotification("Node Calibrated", `Agent successfully synchronized and online.`, "success");
@@ -185,7 +151,6 @@ export default function AgentsView({
         return a;
       })
     );
-    // Persist to backend (debounced by the slider interaction itself)
     const patch = field === "cpu"
       ? { cpu_allocation: value }
       : { memory_allocation: value };
@@ -210,7 +175,6 @@ export default function AgentsView({
       tools: newTools
     });
 
-    // Reset fields & close
     setNewName("");
     setNewRole("");
     setNewAvatar("🤖");
@@ -311,7 +275,6 @@ export default function AgentsView({
                     Quick Actions
                   </div>
 
-                  {/* Pause / Resume */}
                   <button
                     onClick={() => {
                       handleToggleStatus(agent.id);
@@ -332,7 +295,6 @@ export default function AgentsView({
                     )}
                   </button>
 
-                  {/* Restart Node */}
                   <button
                     onClick={() => {
                       handleRestartAgent(agent.id);
@@ -344,7 +306,6 @@ export default function AgentsView({
                     <span>Restart / Reboot Node</span>
                   </button>
 
-                  {/* Decommission Agent */}
                   <button
                     onClick={() => {
                       setDeletingAgent(agent);
@@ -355,72 +316,41 @@ export default function AgentsView({
                     <Trash2 className="w-3.5 h-3.5 text-red-500" />
                     <span>Decommission Agent</span>
                   </button>
-
-                  <div className="border-t border-slate-900/60 my-1 pt-1" />
-
-                  <div className="px-2.5 py-1 text-[9px] font-mono text-slate-500 uppercase tracking-widest font-semibold">
-                    Re-prioritize Task
-                  </div>
-
-                  {/* High priority */}
-                  <button
-                    onClick={() => {
-                      handleSetPriority(agent.id, "high");
-                      setOpenMenuAgentId(null);
-                    }}
-                    className={`w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer ${
-                      agent.priority === "high" ? "bg-rose-500/10 text-rose-400 font-semibold" : ""
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500 shadow-sm shadow-rose-500/50" />
-                      <span>High Priority</span>
-                    </span>
-                    {agent.priority === "high" && <span className="text-[9px] font-mono bg-rose-500/20 text-rose-400 px-1.5 py-0.5 rounded border border-rose-500/10 scale-90">Active</span>}
-                  </button>
-
-                  {/* Medium priority */}
-                  <button
-                    onClick={() => {
-                      handleSetPriority(agent.id, "medium");
-                      setOpenMenuAgentId(null);
-                    }}
-                    className={`w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer ${
-                      agent.priority === "medium" ? "bg-purple-500/10 text-purple-400 font-semibold" : ""
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500 shadow-sm shadow-purple-500/50" />
-                      <span>Medium Priority</span>
-                    </span>
-                    {agent.priority === "medium" && <span className="text-[9px] font-mono bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/10 scale-90">Active</span>}
-                  </button>
-
-                  {/* Low priority */}
-                  <button
-                    onClick={() => {
-                      handleSetPriority(agent.id, "low");
-                      setOpenMenuAgentId(null);
-                    }}
-                    className={`w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs hover:bg-slate-900 text-slate-300 hover:text-white transition-all cursor-pointer ${
-                      agent.priority === "low" ? "bg-slate-800/30 text-slate-400 font-semibold" : ""
-                    }`}
-                  >
-                    <span className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                      <span>Low Priority</span>
-                    </span>
-                    {agent.priority === "low" && <span className="text-[9px] font-mono bg-slate-800/40 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700/10 scale-90">Active</span>}
-                  </button>
                 </div>
               )}
 
-              {/* Memory allocations info */}
-              <div className="space-y-3 pt-2.5 border-t border-slate-800/40">
-                {/* CPU allocation slider */}
+              {/* LIVE NUMERICAL METRICS (Replaces heavy graph to eliminate page lag) */}
+              <div className="grid grid-cols-3 gap-2 p-3 bg-slate-950/70 border border-slate-850 rounded-xl font-mono text-center">
+                <div className="flex flex-col items-center">
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500 uppercase">
+                    <Cpu className="w-3 h-3 text-blue-400" />
+                    <span>CPU</span>
+                  </div>
+                  <span className="text-sm font-bold text-white mt-1">{agent.usage.cpu}%</span>
+                </div>
+
+                <div className="flex flex-col items-center border-x border-slate-850">
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500 uppercase">
+                    <Database className="w-3 h-3 text-purple-400" />
+                    <span>RAM</span>
+                  </div>
+                  <span className="text-sm font-bold text-white mt-1">{agent.usage.memory}MB</span>
+                </div>
+
+                <div className="flex flex-col items-center">
+                  <div className="flex items-center gap-1 text-[9px] text-slate-500 uppercase">
+                    <Zap className="w-3 h-3 text-amber-400" />
+                    <span>LATENCY</span>
+                  </div>
+                  <span className="text-sm font-bold text-emerald-400 mt-1">{isWorking ? "18ms" : "0ms"}</span>
+                </div>
+              </div>
+
+              {/* Allocations Sliders */}
+              <div className="space-y-3 pt-1">
                 <div className="space-y-1">
                   <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                    <span className="flex items-center gap-1"><Cpu className="w-3 h-3 text-blue-400" /> Allocated Cycles</span>
+                    <span>Allocated CPU Cycle Limit</span>
                     <span className="font-bold text-slate-300">{agent.usage.cpu}%</span>
                   </div>
                   <input
@@ -434,10 +364,9 @@ export default function AgentsView({
                   />
                 </div>
 
-                {/* RAM Allocation slider */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-[10px] font-mono text-slate-500">
-                    <span className="flex items-center gap-1"><Database className="w-3 h-3 text-purple-400" /> Synaptic Storage</span>
+                    <span>Allocated RAM Storage Limit</span>
                     <span className="font-bold text-slate-300">{agent.usage.memory} MB</span>
                   </div>
                   <input
@@ -453,34 +382,9 @@ export default function AgentsView({
                 </div>
               </div>
 
-              {/* Trend Chart */}
-              <div className="h-28 w-full mt-2 -mb-2">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={getTrendData(agent.id, agent.usage.cpu, agent.usage.memory)} margin={{ top: 5, right: 0, left: -25, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id={`colorCpu-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#60a5fa" stopOpacity={0}/>
-                      </linearGradient>
-                      <linearGradient id={`colorMem-${agent.id}`} x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#c084fc" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#c084fc" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="time" stroke="#475569" fontSize={8} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#475569" fontSize={8} tickLine={false} axisLine={false} />
-                    <Tooltip
-                      contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "8px", color: "#f8fafc", fontSize: "10px", padding: "4px 8px" }}
-                    />
-                    <Area type="monotone" dataKey="cpu" stroke="#60a5fa" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorCpu-${agent.id})`} name="CPU %" />
-                    <Area type="monotone" dataKey="memory" stroke="#c084fc" strokeWidth={1.5} fillOpacity={1} fill={`url(#colorMem-${agent.id})`} name="Memory MB" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Capabilities checklist */}
+              {/* Capabilities */}
               <div className="space-y-1">
-                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider font-semibold">Cognitive Capabilities</span>
+                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider font-semibold">Capabilities</span>
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {agent.capabilities.map((cap, idx) => (
                     <span key={idx} className="text-[9px] font-mono bg-slate-950 border border-slate-850 px-2 py-0.5 rounded text-slate-400">
@@ -492,7 +396,7 @@ export default function AgentsView({
 
               {/* Tools list */}
               <div className="space-y-1">
-                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider font-semibold">Active Tool Access</span>
+                <span className="text-[9px] font-mono text-slate-500 uppercase tracking-wider font-semibold">Active Tools</span>
                 <div className="flex flex-wrap gap-1.5 pt-1">
                   {agent.tools.map((tool, idx) => (
                     <span key={idx} className="text-[9px] font-mono bg-slate-900 border border-slate-800/60 px-2 py-0.5 rounded text-slate-400">
@@ -548,7 +452,7 @@ export default function AgentsView({
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Are you sure you want to decommission <strong>{deletingAgent.name}</strong>? You can optionally delete their cached context files (detailed MD tasks, history, and progress logs) from the <code>Cached/</code> workspace folder.
+              Are you sure you want to decommission <strong>{deletingAgent.name}</strong>?
             </p>
 
             <div className="flex flex-col gap-2 pt-2">
@@ -592,17 +496,13 @@ export default function AgentsView({
               <h3 className="text-sm font-bold text-white">Create New Agent</h3>
             </div>
 
-            <p className="text-[11px] text-slate-400">
-              Initialize a persistent specialized agent with their automatic context cache files in the <code>Cached/</code> workspace folder.
-            </p>
-
             <div className="space-y-3">
               <div>
                 <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Agent Name *</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Lead Scraper, Data Synthesizer"
+                  placeholder="e.g. Lead Scraper"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
@@ -637,7 +537,7 @@ export default function AgentsView({
                 <label className="block text-[10px] font-mono text-slate-500 uppercase mb-1">Capabilities (comma separated)</label>
                 <input
                   type="text"
-                  placeholder="e.g. Scrape Web, Filter Leads, Summarize Content"
+                  placeholder="e.g. Scrape Web, Filter Leads"
                   value={newCapabilities}
                   onChange={(e) => setNewCapabilities(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-blue-500"
@@ -680,7 +580,7 @@ export default function AgentsView({
                 type="submit"
                 className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
               >
-                Save & Initialize Cache
+                Save & Initialize
               </button>
             </div>
           </form>

@@ -6,6 +6,8 @@ import base64
 import uuid
 import json
 import httpx
+import os
+import sys
 from typing import AsyncGenerator, Dict, List, Any, Optional
 from google import genai
 from google.genai import types
@@ -20,10 +22,6 @@ FALLBACK_CHAIN = ["gemini-3.1-flash-lite", "gemini-3.5-flash"]
 
 # ---------------------------------------------------------------------------
 # JARVIS Tool Definitions
-# ---------------------------------------------------------------------------
-# Each function is registered with Gemini as a callable tool. The model can
-# invoke them mid-stream. Results are fed back as FunctionResponse content so
-# the model can reason over the tool output and continue generating.
 # ---------------------------------------------------------------------------
 
 async def _tool_create_agent(db: AsyncSession, args: Dict[str, Any]) -> str:
@@ -114,7 +112,6 @@ async def _tool_save_memory(db: AsyncSession, args: Dict[str, Any]) -> str:
     from ..services.project import ProjectService
 
     project_id = args.get("project_id")
-    # Fall back to the first available project if none given
     if not project_id:
         projects = await ProjectService.get_projects(db)
         if not projects:
@@ -139,7 +136,6 @@ async def _tool_read_file(args: Dict[str, Any]) -> str:
     rel_path = args.get("path", "").lstrip("/")
     target = (WORKSPACE_ROOT / rel_path).resolve()
 
-    # Security: prevent path traversal
     try:
         target.relative_to(WORKSPACE_ROOT)
     except ValueError:
@@ -170,7 +166,6 @@ async def _tool_write_file(args: Dict[str, Any]) -> str:
     content = args.get("content", "")
     target = (WORKSPACE_ROOT / rel_path).resolve()
 
-    # Security checks
     try:
         target.relative_to(WORKSPACE_ROOT)
     except ValueError:
@@ -223,10 +218,6 @@ async def _tool_await_job(db: AsyncSession, args: Dict[str, Any]) -> str:
     result = await wait_for_job(db, job_id)
     return json.dumps(result)
 
-
-# ---------------------------------------------------------------------------
-# New Core Terminal, Search, Delegation & Browser Tools
-# ---------------------------------------------------------------------------
 
 # Safe terminal blacklisted commands
 BLOCKED_COMMAND_PATTERNS = [
@@ -443,7 +434,6 @@ async def _tool_browser_automation(args: Dict[str, Any]) -> str:
                 "page_text": content[:6000]
             })
     except Exception as e:
-        # Graceful fallback to basic web fetch
         fallback_res = await _tool_web_fetch({"url": url})
         return json.dumps({
             "success": False,
@@ -453,7 +443,7 @@ async def _tool_browser_automation(args: Dict[str, Any]) -> str:
 
 
 async def _tool_delegate_task(db: AsyncSession, args: Dict[str, Any]) -> str:
-    """Antigravity 2.0 Agentic Delegation Loop. Spawns ephemeral subagents for isolated context tasks."""
+    """Antigravity 2.0 Agentic Delegation Loop."""
     from ..schemas.agent import AgentCreate
     from ..services.agent import AgentService
 
@@ -484,16 +474,13 @@ async def _tool_delegate_task(db: AsyncSession, args: Dict[str, Any]) -> str:
         system_instr = (
             f"You are {subagent_name}, a specialized subagent in role: '{role}'. "
             f"Your specific task is: '{task}'. "
-            "You are working on behalf of the Master Agent. "
             "Perform the work diligently using any available tools, and when finished, "
-            "provide a concise, high-quality summary/report of your results. "
-            "Only output your final answer/report once you are fully complete."
+            "provide a concise, high-quality summary/report of your results."
         )
 
         subagent_history = []
         final_text = ""
 
-        # Safe isolated agentic turns loop
         for turn in range(5):
             response_chunks = []
             async for chunk in ai_service.stream_chat(
@@ -511,7 +498,6 @@ async def _tool_delegate_task(db: AsyncSession, args: Dict[str, Any]) -> str:
             subagent_history.append({"role": "model", "content": turn_response})
             final_text = turn_response
 
-        # Update subagent status to 'offline' (disappeared/retired)
         from ..schemas.agent import AgentUpdate
         await AgentService.update_agent(db, agent_record.id, AgentUpdate(
             status="offline",
@@ -541,7 +527,7 @@ async def _tool_delegate_task(db: AsyncSession, args: Dict[str, Any]) -> str:
 
 
 async def _tool_send_marketing_email(args: Dict[str, Any]) -> str:
-    """Placeholder tool for sending email marketing campaigns via Resend (configured in next phase)."""
+    """Placeholder tool for sending email marketing campaigns via Resend."""
     to_email = args.get("to_email", "")
     subject = args.get("subject", "")
     body = args.get("body", "")
@@ -558,7 +544,7 @@ async def _tool_send_marketing_email(args: Dict[str, Any]) -> str:
 
 
 async def _tool_offload_to_jules(args: Dict[str, Any]) -> str:
-    """Placeholder tool for offloading repository tasks directly to Jules API workflows (configured in next phase)."""
+    """Placeholder tool for offloading repository tasks directly to Jules API workflows."""
     repo = args.get("repository", "main-repo")
     task = args.get("task_description", "")
 
@@ -570,9 +556,6 @@ async def _tool_offload_to_jules(args: Dict[str, Any]) -> str:
     })
 
 
-# ---------------------------------------------------------------------------
-# Tool dispatch table
-# ---------------------------------------------------------------------------
 TOOL_DISPATCH = {
     "create_agent": _tool_create_agent,
     "update_agent_allocation": _tool_update_agent,
@@ -594,7 +577,6 @@ TOOL_DISPATCH = {
     "offload_to_jules": _tool_offload_to_jules,
 }
 
-# Gemini function declarations (schema for the model)
 JARVIS_TOOLS = [
     types.Tool(function_declarations=[
         types.FunctionDeclaration(
@@ -603,9 +585,9 @@ JARVIS_TOOLS = [
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "name": types.Schema(type=types.Type.STRING, description="Human-readable agent name, e.g. 'Developer'"),
-                    "role": types.Schema(type=types.Type.STRING, description="Agent's functional role, e.g. 'Full-stack Engineer'"),
-                    "avatar": types.Schema(type=types.Type.STRING, description="Single emoji avatar, e.g. '🤖'"),
+                    "name": types.Schema(type=types.Type.STRING, description="Human-readable agent name"),
+                    "role": types.Schema(type=types.Type.STRING, description="Agent's functional role"),
+                    "avatar": types.Schema(type=types.Type.STRING, description="Single emoji avatar"),
                     "capabilities": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
                     "tools": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
                 },
@@ -618,12 +600,12 @@ JARVIS_TOOLS = [
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "agent_id": types.Schema(type=types.Type.STRING, description="UUID of the agent to update"),
-                    "status": types.Schema(type=types.Type.STRING, description="idle | working | paused | offline"),
-                    "priority": types.Schema(type=types.Type.STRING, description="high | medium | low"),
+                    "agent_id": types.Schema(type=types.Type.STRING),
+                    "status": types.Schema(type=types.Type.STRING),
+                    "priority": types.Schema(type=types.Type.STRING),
                     "current_task": types.Schema(type=types.Type.STRING),
-                    "cpu_percent": types.Schema(type=types.Type.INTEGER, description="0-100"),
-                    "memory_mb": types.Schema(type=types.Type.INTEGER, description="0-512"),
+                    "cpu_percent": types.Schema(type=types.Type.INTEGER),
+                    "memory_mb": types.Schema(type=types.Type.INTEGER),
                 },
                 required=["agent_id"],
             ),
@@ -636,7 +618,7 @@ JARVIS_TOOLS = [
                 properties={
                     "name": types.Schema(type=types.Type.STRING),
                     "description": types.Schema(type=types.Type.STRING),
-                    "color": types.Schema(type=types.Type.STRING, description="Hex color e.g. #3b82f6"),
+                    "color": types.Schema(type=types.Type.STRING),
                 },
                 required=["name"],
             ),
@@ -661,7 +643,7 @@ JARVIS_TOOLS = [
                 type=types.Type.OBJECT,
                 properties={
                     "task_id": types.Schema(type=types.Type.STRING),
-                    "status": types.Schema(type=types.Type.STRING, description="queued | running | completed | failed | cancelled"),
+                    "status": types.Schema(type=types.Type.STRING),
                 },
                 required=["task_id", "status"],
             ),
@@ -672,10 +654,10 @@ JARVIS_TOOLS = [
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "text": types.Schema(type=types.Type.STRING, description="The memory content to store"),
+                    "text": types.Schema(type=types.Type.STRING),
                     "title": types.Schema(type=types.Type.STRING),
-                    "importance": types.Schema(type=types.Type.INTEGER, description="1 (low) to 10 (critical)"),
-                    "project_id": types.Schema(type=types.Type.STRING, description="Optional: project to scope memory under"),
+                    "importance": types.Schema(type=types.Type.INTEGER),
+                    "project_id": types.Schema(type=types.Type.STRING),
                 },
                 required=["text"],
             ),
@@ -686,7 +668,7 @@ JARVIS_TOOLS = [
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "path": types.Schema(type=types.Type.STRING, description="Workspace-relative path, e.g. 'src/App.tsx'"),
+                    "path": types.Schema(type=types.Type.STRING),
                 },
                 required=["path"],
             ),
@@ -705,51 +687,34 @@ JARVIS_TOOLS = [
         ),
         types.FunctionDeclaration(
             name="run_script",
-            description=(
-                "Launch a Python script from the workspace as an autonomous subprocess agent. "
-                "The script runs in the background. Returns a job_id to track execution. "
-                "Use this to run lead scrapers, data processors, or any automation script."
-            ),
+            description="Launch a Python script from the workspace as an autonomous subprocess agent.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "script_path": types.Schema(
-                        type=types.Type.STRING,
-                        description="Workspace-relative path to the .py script, e.g. 'backend/scripts/lead_scraper.py'",
-                    ),
-                    "timeout": types.Schema(
-                        type=types.Type.INTEGER,
-                        description="Max seconds to allow the script to run before killing it. Default 300.",
-                    ),
+                    "script_path": types.Schema(type=types.Type.STRING),
+                    "timeout": types.Schema(type=types.Type.INTEGER),
                 },
                 required=["script_path"],
             ),
         ),
         types.FunctionDeclaration(
             name="await_job",
-            description=(
-                "Wait for a previously launched subprocess job to finish. "
-                "Blocks until the script signals completion or fails. "
-                "Returns the output file path on success — then call read_file_content on that path."
-            ),
+            description="Wait for a previously launched subprocess job to finish.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "job_id": types.Schema(
-                        type=types.Type.STRING,
-                        description="The job_id returned by run_script",
-                    ),
+                    "job_id": types.Schema(type=types.Type.STRING),
                 },
                 required=["job_id"],
             ),
         ),
         types.FunctionDeclaration(
             name="execute_command",
-            description="Run a shell/terminal command in the workspace directory. Safe-checked automatically.",
+            description="Run a shell/terminal command in the workspace directory.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "command": types.Schema(type=types.Type.STRING, description="The CLI/CMD command to run"),
+                    "command": types.Schema(type=types.Type.STRING),
                 },
                 required=["command"],
             ),
@@ -760,19 +725,19 @@ JARVIS_TOOLS = [
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "path": types.Schema(type=types.Type.STRING, description="Workspace-relative path to the script to run"),
-                    "args": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING), description="List of arguments"),
+                    "path": types.Schema(type=types.Type.STRING),
+                    "args": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
                 },
                 required=["path"],
             ),
         ),
         types.FunctionDeclaration(
             name="grep_search",
-            description="Perform a high-performance regex search across all files in the workspace (excluding standard build/storage folders).",
+            description="Perform a high-performance regex search across all files in the workspace.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "pattern": types.Schema(type=types.Type.STRING, description="Regex pattern to search for"),
+                    "pattern": types.Schema(type=types.Type.STRING),
                 },
                 required=["pattern"],
             ),
@@ -783,37 +748,33 @@ JARVIS_TOOLS = [
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "url": types.Schema(type=types.Type.STRING, description="The URL to fetch"),
+                    "url": types.Schema(type=types.Type.STRING),
                 },
                 required=["url"],
             ),
         ),
         types.FunctionDeclaration(
             name="browser_automation",
-            description="Execute dynamic browser steps (clicks, form inputs, screenshot) using headless Playwright chromium.",
+            description="Execute dynamic browser steps using headless Playwright chromium.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "url": types.Schema(type=types.Type.STRING, description="URL to open"),
-                    "actions": types.Schema(
-                        type=types.Type.ARRAY,
-                        items=types.Schema(type=types.Type.STRING),
-                        description="Array of instructions, e.g. ['click #submit', 'wait', 'type #user admin', 'screenshot']"
-                    ),
+                    "url": types.Schema(type=types.Type.STRING),
+                    "actions": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
                 },
                 required=["url"],
             ),
         ),
         types.FunctionDeclaration(
             name="delegate_task",
-            description="Antigravity 2.0: Spawns an isolated dynamic subagent to solve a subproblem, keeping context window clean, and returns report.",
+            description="Antigravity 2.0: Spawns an isolated dynamic subagent to solve a subproblem.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "name": types.Schema(type=types.Type.STRING, description="Descriptive subagent name"),
-                    "role": types.Schema(type=types.Type.STRING, description="Role instruction or persona, e.g. 'Security Auditor'"),
-                    "task": types.Schema(type=types.Type.STRING, description="Detailed specific objective to complete"),
-                    "tools": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING), description="List of allowed tool names"),
+                    "name": types.Schema(type=types.Type.STRING),
+                    "role": types.Schema(type=types.Type.STRING),
+                    "task": types.Schema(type=types.Type.STRING),
+                    "tools": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING)),
                 },
                 required=["name", "role", "task"],
             ),
@@ -848,13 +809,11 @@ JARVIS_TOOLS = [
 
 
 async def _execute_tool(name: str, args: Dict[str, Any], db: Optional[AsyncSession]) -> str:
-    """Dispatch a tool call to its Python implementation and return the result string."""
     handler = TOOL_DISPATCH.get(name)
     if not handler:
         return json.dumps({"success": False, "error": f"Unknown tool: {name}"})
 
     try:
-        # File/Fetch tools don't need the DB session
         if name in ("read_file_content", "write_file_content", "execute_command", "execute_python_file", "grep_search", "web_fetch", "browser_automation", "send_marketing_email", "offload_to_jules"):
             return await handler(args)
         else:
@@ -866,7 +825,7 @@ async def _execute_tool(name: str, args: Dict[str, Any], db: Optional[AsyncSessi
 
 
 class AIService:
-    """Wraps the google-genai SDK & OpenRouter with streaming, retry, fallback, and JARVIS function-calling."""
+    """Wraps the google-genai SDK & OpenRouter with streaming, retry, fallback, offline task router, and JARVIS function-calling."""
 
     def __init__(self):
         settings = get_settings()
@@ -893,7 +852,23 @@ class AIService:
         temperature: float = 0.7,
         db: Optional[AsyncSession] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream a chat completion from Gemini/OpenRouter with full JARVIS tool-call execution loop."""
+        """Stream a chat completion from Gemini/OpenRouter or Offline task router."""
+
+        # Offline / Task Router Check
+        try:
+            root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+            if root_dir not in sys.path:
+                sys.path.insert(0, root_dir)
+            import task_router
+            route_info = await asyncio.to_thread(task_router.route_task, message)
+            if route_info.get("engine") in ("local_agent_bridge", "local_direct_script", "offline_fallback_failed"):
+                yield {"text": f"[{route_info.get('mode', 'OFFLINE')}]\n" + route_info.get("response", "")}
+                if route_info.get("staged_files"):
+                    yield {"text": f"\n\n[STAGED FILES FOR CLOUD REVIEW]: {', '.join(route_info.get('staged_files'))}"}
+                yield {"done": True, "latency": 0.1, "token_count": 50, "model_used": "jarvis-local"}
+                return
+        except Exception:
+            pass
 
         # Select OpenRouter Backup support
         is_openrouter = ("deepseek" in model or "gemma" in model or "openrouter" in model or model == "gemma-4-31b")
@@ -915,7 +890,6 @@ class AIService:
         enriched_message, context_trace = await ContextService.assemble(message, db)
         await EventService.record(db, "objective.started", status="running", correlation_id=correlation_id, metadata={"context": context_trace})
 
-        # Build content sequence from history + current message
         contents: List[types.Content] = []
         for msg in history:
             role = "user" if msg.get("role") == "user" else "model"
@@ -926,7 +900,6 @@ class AIService:
             types.Content(role="user", parts=[types.Part.from_text(text=enriched_message)])
         )
 
-        # Build generation config — tools mutually exclusive with Google Search
         tools_to_use = JARVIS_TOOLS if not use_search else [types.Tool(google_search=types.GoogleSearch())]
 
         config = types.GenerateContentConfig(
@@ -935,7 +908,6 @@ class AIService:
             tools=tools_to_use,
         )
 
-        # Approve only known models; clamp unknown IDs to Flash Lite
         primary_model = model if model in FALLBACK_CHAIN else "gemini-3.1-flash-lite"
         models_to_try = [primary_model] + [m for m in FALLBACK_CHAIN if m != primary_model]
         last_error = None
@@ -957,19 +929,16 @@ class AIService:
                             config=config,
                         )
 
-                        # Collect all chunks, streaming text as we go
                         collected_parts: List[types.Part] = []
                         function_calls_found: List[types.FunctionCall] = []
                         text_buffer = ""
 
                         async for chunk in response:
-                            # --- Text streaming ---
                             text = chunk.text or ""
                             if text:
                                 token_count += len(text.split())
                                 text_buffer += text
 
-                                # Extract grounding metadata if search was used
                                 search_chunks: list = []
                                 if hasattr(chunk, "candidates") and chunk.candidates:
                                     meta = getattr(chunk.candidates[0], "grounding_metadata", None)
@@ -985,7 +954,6 @@ class AIService:
                                         ]
                                 yield {"text": text, "searchChunks": search_chunks}
 
-                            # --- Function call detection ---
                             if hasattr(chunk, "candidates") and chunk.candidates:
                                 candidate = chunk.candidates[0]
                                 if hasattr(candidate, "content") and candidate.content:
@@ -994,13 +962,9 @@ class AIService:
                                             function_calls_found.append(part.function_call)
                                         collected_parts.append(part)
 
-                        # If no function calls, the model is done
                         if not function_calls_found:
                             break
 
-                        # -------------------------------------------------------
-                        # Execute each function call and feed results back
-                        # -------------------------------------------------------
                         model_content = types.Content(role="model", parts=collected_parts)
                         current_contents.append(model_content)
 
@@ -1008,7 +972,6 @@ class AIService:
                         for fc in function_calls_found:
                             call_args = dict(fc.args) if fc.args else {}
 
-                            # Notify the frontend a tool is executing
                             yield {
                                 "toolCall": {
                                     "name": fc.name,
@@ -1019,7 +982,6 @@ class AIService:
 
                             result_str = await _execute_tool(fc.name, call_args, db)
 
-                            # Notify the frontend the tool completed
                             yield {
                                 "toolCall": {
                                     "name": fc.name,
@@ -1029,7 +991,6 @@ class AIService:
                                 }
                             }
 
-                            # Broadcast workspace changed event for all mutations
                             if fc.name in (
                                 "create_agent",
                                 "update_agent_allocation",
@@ -1053,12 +1014,10 @@ class AIService:
                                 )
                             )
 
-                        # Append tool results as user content and loop back
                         current_contents.append(
                             types.Content(role="user", parts=function_response_parts)
                         )
 
-                    # End of agentic loop — success
                     latency = time.monotonic() - start
                     yield {
                         "done": True,
@@ -1079,9 +1038,8 @@ class AIService:
                         retries += 1
                         await asyncio.sleep(retries)
                         continue
-                    break  # Move to next model in fallback chain
+                    break
 
-        # All models exhausted
         yield {"error": str(last_error) if last_error else "All models failed"}
 
     async def _stream_openrouter_chat(
@@ -1104,21 +1062,18 @@ class AIService:
         enriched_message, context_trace = await ContextService.assemble(message, db)
         await EventService.record(db, "objective.started", status="running", correlation_id=correlation_id, metadata={"context": context_trace})
 
-        # Map frontend model requests to real OpenRouter model strings
         real_model = model
         if model == "gemma-4-31b" or "gemma" in model:
             real_model = "google/gemma-2-27b-it"
         elif "deepseek" in model:
             real_model = "deepseek/deepseek-v4-flash"
 
-        # Build message history sequence
         messages = [{"role": "system", "content": system_instruction}]
         for msg in history:
             role = "user" if msg.get("role") == "user" else "assistant"
             messages.append({"role": role, "content": msg.get("content", "")})
         messages.append({"role": "user", "content": enriched_message})
 
-        # Translate schemas to OpenAI-compliant tool schemas
         openai_tools = []
         for t in JARVIS_TOOLS:
             for fd in t.function_declarations:
